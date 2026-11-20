@@ -1,0 +1,128 @@
+{
+  "_note": "Common names offered as suggestions while typing; people can still type others. Names here should match how jobs are written, so matching works. renew_years is the usual renewal cycle, used to suggest an expiry date from the date someone got it; note is shown when they add it. Cycles are Queensland-focused (see the research report): check them before relying on them elsewhere.",
+  "licence": [
+    {
+      "name": "Standard 11",
+      "renew_years": 5,
+      "note": "Refresher due at least every 5 years for Queensland coal mines. Some sites ask for it every 2 years."
+    },
+    {
+      "name": "Standard 11 Underground",
+      "renew_years": 5,
+      "note": "Refresher due at least every 5 years for Queensland coal mines. Some sites ask for it every 2 years."
+    },
+    {
+      "name": "Coal Board Medical",
+      "renew_years": 5,
+      "note": "Coal Mine Workers' Health Scheme assessment: at least every 5 years. A new employer may arrange a new one."
+    },
+    {
+      "name": "G1 Metalliferous Induction",
+      "note": "Refresher periods vary by site: check with the site or your training provider."
+    },
+    {
+      "name": "S123 Site Supervisor",
+      "renew_years": 5,
+      "note": "Refresher every 5 years for Queensland coal mines."
+    },
+    {
+      "name": "G2 Risk Facilitator",
+      "renew_years": 5,
+      "note": "Usually refreshed with S123, every 5 years."
+    },
+    {
+      "name": "Open Cut Examiner Practising Certificate",
+      "renew_years": 5,
+      "note": "Practising certificates run on a 5-year cycle with ongoing professional development."
+    },
+    "Site Senior Executive Notice",
+    {
+      "name": "Dogging (DG)",
+      "renew_years": 5,
+      "note": "High risk work licences last 5 years. Renew before the expiry date: an expired licence isn't valid, even while a renewal is being processed."
+    },
+    {
+      "name": "Basic Rigging (RB)",
+      "renew_years": 5,
+      "note": "High risk work licences last 5 years. Renew before the expiry date: an expired licence isn't valid, even while a renewal is being processed."
+    },
+    {
+      "name": "Intermediate Rigging (RI)",
+      "renew_years": 5,
+      "note": "High risk work licences last 5 years. Renew before the expiry date: an expired licence isn't valid, even while a renewal is being processed."
+    },
+    {
+      "name": "Basic Scaffolding (SB)",
+      "renew_years": 5,
+      "note": "High risk work licences last 5 years. Renew before the expiry date: an expired licence isn't valid, even while a renewal is being processed."
+    },
+    {
+      "name": "Forklift (LF)",
+      "renew_years": 5,
+      "note": "High risk work licences last 5 years. Renew before the expiry date: an expired licence isn't valid, even while a renewal is being processed."
+    },
+    {
+      "name": "Elevating Work Platform (WP)",
+      "renew_years": 5,
+      "note": "High risk work licences last 5 years. Renew before the expiry date: an expired licence isn't valid, even while a renewal is being processed."
+    },
+    {
+      "name": "Heavy Rigid Licence",
+      "note": "Use the expiry date on your driver licence."
+    },
+    {
+      "name": "Heavy Combination Licence",
+      "note": "Use the expiry date on your driver licence."
+    },
+    {
+      "name": "Multi Combination Licence",
+      "note": "Use the expiry date on your driver licence."
+    },
+    {
+      "name": "White Card",
+      "note": "Doesn't expire. In WA it lapses after 2 years without construction work."
+    },
+    {
+      "name": "First Aid (HLTAID011)",
+      "renew_years": 3,
+      "note": "Usually renewed every 3 years, with CPR every year."
+    },
+    {
+      "name": "Working at Heights",
+      "note": "No set expiry: many sites ask for a refresher every 2 to 3 years."
+    },
+    {
+      "name": "Confined Space",
+      "note": "No set expiry: many sites ask for a refresher every 2 to 3 years."
+    },
+    {
+      "name": "Electrical Licence",
+      "note": "Use the expiry date on your licence."
+    }
+  ],
+  "qualification": [
+    "Cert II Surface Extraction Operations",
+    "Cert III Surface Extraction Operations",
+    "Cert IV Surface Extraction Operations",
+    "Cert III Heavy Commercial Vehicle Mechanical Technology",
+    "Cert III Electrotechnology Electrician",
+    "Cert III Engineering Mechanical Trade",
+    "Cert III Engineering Fabrication Trade",
+    "Diploma of Surface Coal Mining Management"
+  ],
+  "skill": [
+    "Dragline operation",
+    "Dozer operation",
+    "Excavator operation",
+    "Haul truck operation",
+    "Grader operation",
+    "Loader operation",
+    "Water cart operation",
+    "Drill operation",
+    "Diesel fitting",
+    "Hydraulics",
+    "Welding",
+    "Shutdown maintenance",
+    "Auto electrical"
+  ]
+}

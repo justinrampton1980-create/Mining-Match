@@ -1,0 +1,126 @@
+{
+  "as_of": "2026-11-19",
+  "job": {
+    "id": "job-1",
+    "title": "Dragline Operator",
+    "start_date": "2026-12-01",
+    "location": "QLD",
+    "required_licences": ["Standard 11", "Coal Board Medical"],
+    "preferred_licences": ["Working at Heights"],
+    "required_qualifications": ["Cert III Surface Extraction"],
+    "required_skills": [{ "name": "Dragline operation", "min_years": 3 }],
+    "preferred_skills": ["Dozer operation"],
+    "min_experience_years": 5,
+    "relevant_roles": ["Dragline Operator", "Excavator Operator"]
+  },
+  "job2": {
+    "id": "job-2",
+    "title": "Maintenance Fitter",
+    "start_date": "2026-12-01",
+    "required_licences": ["Standard 11"],
+    "required_qualifications": ["Fitter and Turner Trade Cert"],
+    "required_skills": [{ "name": "Hydraulics", "min_years": 2 }]
+  },
+  "candidates": [
+    {
+      "id": "cand-a",
+      "name": "Alex Strong",
+      "location": "QLD",
+      "licences": [
+        { "type": "SS11", "expiry": "2028-05-01" },
+        { "type": "Coal Board Medical", "expiry": "2027-06-30" },
+        "Working at Heights"
+      ],
+      "qualifications": ["Cert III Surface Extraction"],
+      "skills": [
+        { "name": "Dragline operation", "years": 6 },
+        { "name": "Dozer operation", "years": 2 }
+      ],
+      "experience": [
+        { "role": "Dragline Operator", "years": 4 },
+        { "role": "Excavator Operator", "years": 3 }
+      ]
+    },
+    {
+      "id": "cand-b",
+      "name": "Blake Lapsed",
+      "location": "NSW",
+      "willing_fifo": true,
+      "licences": [
+        { "type": "Standard 11", "expiry": "2030-01-01" },
+        { "type": "Coal Board Medical", "expiry": "2026-10-31" }
+      ],
+      "qualifications": ["Cert III Surface Extraction"],
+      "skills": [{ "name": "Dragline operation", "years": 1.5 }],
+      "experience": [
+        { "role": "Dragline Operator", "years": 2 },
+        { "role": "Truck Driver", "years": 8 }
+      ]
+    },
+    {
+      "id": "cand-c",
+      "name": "Casey Expiring",
+      "location": "qld",
+      "licences": [
+        { "type": "Standard 11", "expiry": "2027-12-31" },
+        { "type": "Coal Board Medical", "expiry": "2027-01-15" },
+        { "type": "Working at Heights" }
+      ],
+      "qualifications": ["cert iii surface extraction"],
+      "skills": ["Dragline operation"],
+      "experience": [{ "role": "excavator operator", "years": 6 }]
+    },
+    {
+      "id": "cand-d",
+      "name": "Drew NoCert",
+      "location": "WA",
+      "licences": ["Standard 11", "Coal Board Medical", "Working at Heights"],
+      "qualifications": [],
+      "skills": [
+        { "name": "Dragline operation", "years": 3 },
+        { "name": "Dozer operation", "years": 1 }
+      ],
+      "experience": [{ "role": "Dragline operator", "years": 5 }]
+    }
+  ],
+  "expected": {
+    "cand-a": {
+      "score": 100.0,
+      "eligible": true,
+      "breakdown": { "licences": 100.0, "qualifications": 100.0, "skills": 100.0, "experience": 100.0, "location": 100.0 },
+      "blockers": [],
+      "gaps": [],
+      "warnings": []
+    },
+    "cand-b": {
+      "score": 51.8,
+      "eligible": false,
+      "breakdown": { "licences": 40.0, "qualifications": 100.0, "skills": 33.3, "experience": 40.0, "location": 70.0 },
+      "blockers": ["Coal Board Medical: expired 2026-10-31"],
+      "gaps": [
+        "Working at Heights (preferred): missing",
+        "Dragline operation: 1.5/3 yrs",
+        "Dozer operation (preferred): missing",
+        "experience: 2/5 yrs relevant"
+      ],
+      "warnings": ["relocation or FIFO required"]
+    },
+    "cand-c": {
+      "score": 91.7,
+      "eligible": true,
+      "breakdown": { "licences": 100.0, "qualifications": 100.0, "skills": 66.7, "experience": 100.0, "location": 100.0 },
+      "blockers": [],
+      "gaps": ["Dozer operation (preferred): missing"],
+      "warnings": ["Coal Board Medical expires 2027-01-15"]
+    },
+    "cand-d": {
+      "score": 75.0,
+      "eligible": false,
+      "breakdown": { "licences": 100.0, "qualifications": 0.0, "skills": 100.0, "experience": 100.0, "location": 0.0 },
+      "blockers": ["Cert III Surface Extraction: missing"],
+      "gaps": ["location: WA (job in QLD)"],
+      "warnings": []
+    }
+  },
+  "expected_order": ["cand-a", "cand-c", "cand-d", "cand-b"]
+}
