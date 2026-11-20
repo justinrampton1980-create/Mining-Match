@@ -225,7 +225,7 @@ Clients send `Authorization: Bearer <token>` from `/auth/login`. Errors: 400 bad
 - Sessions: random tokens, stored only as hashes. They end after 7 days unused or 30 days in total, on logout, on password reset (all devices), on password change (other devices) and on suspension.
 - Email links (confirmation 48 hours, reset 1 hour) work once and are stored only as hashes.
 - Sign-up, resend and password reset give the same answer whether or not the email is registered, and login gives the same error for a wrong password and an unknown email. Nobody can use them to find out who is on the platform.
-- Failed logins: 5 per email or 30 per IP address in 15 minutes, then a wait. Emails sent are limited per address too.
+- Failed logins: 5 for one account from one IP address, or 30 from one IP address, in 15 minutes, then a wait; also 100 for one account in an hour across all addresses. Someone else's wrong guesses don't lock the owner out. Emails sent are limited per address too.
 - Validation errors never repeat what was submitted, so passwords can't leak into logs or screens.
 
 **Uploads.** The file type comes from the file's content, not its name or what the browser claims. Only PDF, Word (.doc/.docx), JPEG and PNG up to 10 MB are accepted. A virus-scan hook (`scan_upload`) runs before anything is stored; connect it to ClamAV or a cloud scanner in production. Files are always downloaded as attachments, never shown inside the browser.

@@ -20,7 +20,7 @@ For anyone reviewing this code, including the ChatGPT agent working on Mining Ma
 ## Running the checks
 
 ```bash
-cd python && pip install -r requirements.txt && python -m unittest    # 165 tests
+cd python && pip install -r requirements.txt && python -m unittest    # 170 tests
 cd ../js && node --test                                                # 20 tests
 ```
 
