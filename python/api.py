@@ -255,6 +255,7 @@ class UserActiveIn(In):
 # --------------------------------------------------------------- the app
 NO_CSP_PATHS = ("/docs", "/redoc", "/openapi.json")
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+HSTS = "max-age=31536000"  # browsers use HTTPS only for this site for a year
 SESSION_COOKIE = "mm_session"
 CSRF_HEADER, CSRF_VALUE = "x-requested-with", "mining-match"
 # The website may load only its own files; no inline scripts, no other sites.
@@ -300,6 +301,8 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
+        if request.url.scheme == "https":  # behind nginx, uvicorn's --proxy-headers sets this
+            response.headers["Strict-Transport-Security"] = HSTS
         path = request.url.path
         if path == "/" or path.startswith("/assets/"):
             response.headers["Content-Security-Policy"] = WEB_CSP
