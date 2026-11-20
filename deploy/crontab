@@ -1,0 +1,6 @@
+# crontab for the miningmatch user (install with: crontab -u miningmatch deploy/crontab)
+CRON_TZ=Australia/Brisbane
+# 6:50am: licence reminders, then invoices due today
+50 6 * * *  set -a; . /etc/mining-match.env; cd /srv/mining-match/app/python && /srv/mining-match/venv/bin/python -m daily
+# 2:15am: backups
+15 2 * * *  /srv/mining-match/backup.sh

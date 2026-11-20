@@ -1,0 +1,27 @@
+# systemd service for the Mining Match web app. Install to /etc/systemd/system/.
+[Unit]
+Description=Mining Match web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=miningmatch
+Group=miningmatch
+WorkingDirectory=/srv/mining-match/app/python
+EnvironmentFile=/etc/mining-match.env
+# --proxy-headers with nginx on the same machine: rate limits then see each visitor's real address.
+# One worker: SQLite. Increase only after moving to PostgreSQL.
+ExecStart=/srv/mining-match/venv/bin/uvicorn api:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the app can write only to its data folder.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/mining-match/data
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# API server (the matching engine, data layer and access control use only the standard library)
+fastapi>=0.165,<1
+uvicorn>=0.54
+python-multipart>=0.0.32
+pydantic>=2.13,<3
+reportlab>=4.0  # invoice PDFs
+# Tests only
+httpx>=0.28
+playwright>=1.40  # browser tests (test_web.py); optional
+pypdf>=4.0  # reads invoice PDFs in test_billing.py; optional
