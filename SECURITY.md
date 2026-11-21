@@ -11,6 +11,7 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Session tokens, email-confirmation tokens and reset tokens are random and stored only as SHA-256 hashes. A database leak doesn't reveal working sessions.
 - Sessions expire after 7 days unused or 30 days in total. Password reset ends every session; password change ends the others; suspension ends all of them straight away.
 - Login, sign-up and reset never reveal whether an email is registered, by their answer or by how long they take.
+- Employer candidate searches and job rankings are limited to 100 an hour and 500 a day per employer, so nobody can sweep the whole candidate pool.
 - Rate limits on failed logins: 5 for one account from one IP address, or 30 from one IP address, in 15 minutes; and 100 for one account in an hour from all addresses together. Someone else guessing at an account can't lock its owner out. Emails sent are limited too.
 
 **The website**
@@ -30,6 +31,9 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Filenames are cleaned, and storage paths can't escape the upload folder.
 - Files are always sent as downloads, never displayed inside the site.
 
+**Backups**
+- Nightly backups are encrypted to a public key whose private key is kept off the server, so a break-in at the server or the backup storage doesn't expose them. The script refuses to write unencrypted backups.
+
 **Money**
 - Bank details come only from server settings, never from the website, so nobody who breaks into an account can redirect payments.
 - Issued invoices and published fee terms can't be changed: database triggers refuse it.
@@ -43,7 +47,7 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 |---|---|
 | Uploads aren't virus-scanned in production | Connect ClamAV (installed by the deployment steps) through the `scan_upload` hook in `api.app_from_environment()`. |
 | No two-factor login | Add it, at least for admins. |
-| Single-server SQLite | Move to PostgreSQL; encrypt backups and copy them off the server. |
+| Single-server SQLite | Move to PostgreSQL; copy the (encrypted) backups off the server. |
 | Deployment files not run on a real server | Test them on the VPS; run `nginx -t`. |
 | No independent security test | Commission one before launch. |
 | Admin accounts can see everything | Keep the number of admins small and review the activity log. |

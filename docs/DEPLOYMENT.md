@@ -31,7 +31,7 @@ Your domain and email can stay on any Bluehost plan; only the app needs the VPS.
 ```bash
 # 1. System packages
 sudo apt update && sudo apt -y upgrade
-sudo apt -y install python3 python3-venv nginx certbot python3-certbot-nginx clamav-daemon ufw unattended-upgrades sqlite3
+sudo apt -y install python3 python3-venv nginx certbot python3-certbot-nginx clamav-daemon ufw unattended-upgrades sqlite3 age
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
 
 # 2. A user that runs the app, and the code
@@ -59,12 +59,39 @@ sudo ln -s /etc/nginx/sites-available/mining-match /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d YOUR-DOMAIN
 
-# 6. Daily job and backups
+# 6. Daily job and backups (make the backup key first; see "Backups" below)
 sudo cp /srv/mining-match/app/deploy/backup.sh /srv/mining-match/backup.sh && sudo chmod 750 /srv/mining-match/backup.sh
 sudo crontab -u miningmatch /srv/mining-match/app/deploy/crontab
 ```
 
 Point your domain's DNS (an A record) at the VPS's IP address before running certbot.
+
+## Backups
+
+`deploy/backup.sh` runs nightly. It copies the database and the uploads, encrypts both with
+[age](https://age-encryption.org) and keeps 14 days of them in `/srv/mining-match/backups`.
+
+**Make the key on your own computer, not the server** (install age first, e.g. `brew install age`
+on a Mac, or from the age website on Windows):
+
+```sh
+age-keygen -o mining-match-backup-key.txt
+```
+
+It prints a public key starting `age1...`. Put that in `/etc/mining-match.env` as
+`MM_BACKUP_RECIPIENT`. Keep `mining-match-backup-key.txt` (the private key) somewhere safe off
+the server, such as a password manager. **Without it the backups can't be opened**, and with it
+anyone can open them, so don't copy it to the server or the backup storage. The script stops with
+an error if `MM_BACKUP_RECIPIENT` isn't set, rather than writing unencrypted backups.
+
+**To restore**, copy the backup files and the key to a safe machine and run:
+
+```sh
+age -d -i mining-match-backup-key.txt -o mm.db db-YYYY-MM-DD.sqlite.age
+age -d -i mining-match-backup-key.txt uploads-YYYY-MM-DD.tar.gz.age | tar -xzf -
+```
+
+Then stop the app, put `mm.db` at `MM_DB` and the uploads folder at `MM_FILES`, and start it again.
 
 ## Before real candidates sign up
 
@@ -73,7 +100,7 @@ Point your domain's DNS (an A record) at the VPS's IP address before running cer
 - [ ] Email sends for real (sign up a test account).
 - [ ] Billing settings set and a test invoice checked by your accountant.
 - [ ] Placement terms, privacy policy and candidate terms written by a lawyer and published.
-- [ ] Backups run, are copied off the server, and a restore has been tested.
+- [ ] Backup key made and stored off the server; backups run, are copied off the server, and a restore has been tested.
 - [ ] Independent security test.
 - [ ] Move to PostgreSQL before growing beyond a pilot (not yet built).
 

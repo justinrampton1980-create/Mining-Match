@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import tempfile
+import time
 import unittest
 import zipfile
 from datetime import date, timedelta
@@ -593,6 +594,50 @@ class ExpiryReminders(ApiTest):
         self.assertIsNone(rules["White Card"]["renew_years"])
         self.assertIn("Doesn’t expire".replace("’", "'"), rules["White Card"]["note"])
         self.assertEqual(self.client.get("/catalog/licence-rules").status_code, 401)
+
+
+class SearchLimits(ApiTest):
+    def test_employer_searches_are_limited_per_hour_and_per_day(self):
+        self.candidate()
+        self.employer()
+        hourly, _ = auth.EMPLOYER_SEARCHES_PER_HOUR
+        daily, _ = auth.EMPLOYER_SEARCHES_PER_DAY
+        now = [int(time.time())]
+        with mock.patch.object(auth, "clock", lambda: now[0]):
+            eh = self.login("hr@alpha.example")
+            search = lambda: self.client.post("/search/candidates", json={"criteria": {}}, headers=eh)
+            for _ in range(hourly):
+                self.assertEqual(search().status_code, 200)
+            r = search()
+            self.assertEqual(r.status_code, 429)
+            self.assertGreater(int(r.headers["retry-after"]), 0)
+            done = hourly
+            while done < daily:  # spread over the day, the daily cap still applies
+                now[0] += 3601
+                for _ in range(min(hourly, daily - done)):
+                    self.assertEqual(search().status_code, 200)
+                done += min(hourly, daily - done)
+            now[0] += 3601
+            self.assertEqual(search().status_code, 429)
+            now[0] += 24 * 3600
+            self.assertEqual(search().status_code, 200)
+
+    def test_job_rankings_count_too_and_other_employers_are_unaffected(self):
+        self.candidate()
+        eh, _ = self.employer()
+        other, _ = self.employer("hr@beta.example", "Beta Mining")
+        r = self.client.post("/jobs", headers=eh, json={**JOB, "status": "open"})
+        self.assertEqual(r.status_code, 201, r.text)
+        job_id = r.json()["id"]
+        hourly, _ = auth.EMPLOYER_SEARCHES_PER_HOUR
+        with mock.patch.object(auth, "EMPLOYER_SEARCHES_PER_HOUR", (3, 3600)):
+            for _ in range(3):
+                self.assertEqual(self.client.get(f"/jobs/{job_id}/ranked-candidates", headers=eh).status_code, 200)
+            self.assertEqual(self.client.post("/search/candidates", json={"criteria": {}}, headers=eh).status_code, 429)
+            self.assertEqual(self.client.post("/search/candidates", json={"criteria": {}}, headers=other).status_code, 200)
+            for _ in range(5):  # admins aren't limited
+                self.assertEqual(self.client.post("/search/candidates", json={"criteria": {}},
+                                                  headers=self.admin).status_code, 200)
 
 
 class HttpsOnly(ApiTest):

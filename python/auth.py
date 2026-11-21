@@ -52,6 +52,10 @@ LOGIN_FAILS_PER_EMAIL = (100, 60 * 60)  # one account guessed at from many addre
 RESET_REQUESTS_PER_EMAIL = (3, 3600)
 EMAILS_PER_IP = (20, 3600)  # sign-ups, resends and reset requests from one address
 RESENDS_PER_EMAIL = (3, 3600)
+# Employer candidate searches and rankings: generous for real recruiting, but stops one
+# employer sweeping the whole candidate pool with thousands of varied searches.
+EMPLOYER_SEARCHES_PER_HOUR = (100, 3600)
+EMPLOYER_SEARCHES_PER_DAY = (500, 24 * 3600)
 
 COMMON_PASSWORDS = frozenset({
     "password123", "password1234", "qwertyuiop", "1234567890", "123456789a", "iloveyou12",
@@ -216,6 +220,14 @@ def _limit(conn, bucket: str, key: str, rule: tuple, message: str) -> None:
             (bucket, key, clock() - window, limit),
         ).fetchone()[0]
         raise TooManyAttempts(message, retry_after=max(1, oldest + window - clock()))
+
+
+def limit_employer_search(conn, employer_id: str) -> None:
+    """Count one candidate search or ranking by an employer; raise TooManyAttempts over the limit."""
+    message = "too many candidate searches, try again later"
+    _limit(conn, "employer_search", employer_id, EMPLOYER_SEARCHES_PER_HOUR, message)
+    _limit(conn, "employer_search", employer_id, EMPLOYER_SEARCHES_PER_DAY, message)
+    _record(conn, "employer_search", employer_id)
 
 
 # ------------------------------------------------------------------- tokens
