@@ -32,7 +32,8 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Files are always sent as downloads, never displayed inside the site.
 
 **Backups**
-- Nightly backups are encrypted to a public key whose private key is kept off the server, so a break-in at the server or the backup storage doesn't expose them. The script refuses to write unencrypted backups.
+- Nightly backups are streamed straight into encryption to a public key whose private key is kept off the server, so no unencrypted copy is ever written to disk and a break-in at the server or the backup storage doesn't expose them.
+- There is no unencrypted fallback: a missing or wrong key (including the private key pasted by mistake), a missing tool, a database that fails its integrity check or any failed step means nothing is written and an alert email is sent. Unencrypted backups from older versions are removed.
 
 **Money**
 - Bank details come only from server settings, never from the website, so nobody who breaks into an account can redirect payments.

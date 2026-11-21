@@ -60,7 +60,9 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d YOUR-DOMAIN
 
 # 6. Daily job and backups (make the backup key first; see "Backups" below)
-sudo cp /srv/mining-match/app/deploy/backup.sh /srv/mining-match/backup.sh && sudo chmod 750 /srv/mining-match/backup.sh
+# Owned by root so the app's user can run the script but not change it.
+sudo install -o root -g miningmatch -m 750 /srv/mining-match/app/deploy/backup.sh /srv/mining-match/backup.sh
+sudo -u miningmatch /srv/mining-match/backup.sh --check   # must say "settings OK"
 sudo crontab -u miningmatch /srv/mining-match/app/deploy/crontab
 ```
 
@@ -68,8 +70,18 @@ Point your domain's DNS (an A record) at the VPS's IP address before running cer
 
 ## Backups
 
-`deploy/backup.sh` runs nightly. It copies the database and the uploads, encrypts both with
-[age](https://age-encryption.org) and keeps 14 days of them in `/srv/mining-match/backups`.
+`deploy/backup.sh` runs nightly at 2:15am. It streams the database and the uploads straight into
+[age](https://age-encryption.org) encryption, so **no unencrypted copy is ever written to disk**,
+and keeps 14 days of them in `/srv/mining-match/backups`:
+
+- `db-YYYY-MM-DD.sql.gz.age`: the database, as a consistent SQL dump
+- `uploads-YYYY-MM-DD.tar.gz.age`: the uploads folder
+
+**Encryption can't be turned off.** If the key is missing or wrong, a tool is missing, the database
+fails its integrity check or any step fails, the script writes nothing, logs why in
+`/srv/mining-match/backup.log` and emails `MM_BACKUP_ALERT_EMAIL`. It also removes any unencrypted
+backups left by older versions of the script, and stops with an error if anything other than
+encrypted backups turns up in the backup folder.
 
 **Make the key on your own computer, not the server** (install age first, e.g. `brew install age`
 on a Mac, or from the age website on Windows):
@@ -79,19 +91,29 @@ age-keygen -o mining-match-backup-key.txt
 ```
 
 It prints a public key starting `age1...`. Put that in `/etc/mining-match.env` as
-`MM_BACKUP_RECIPIENT`. Keep `mining-match-backup-key.txt` (the private key) somewhere safe off
-the server, such as a password manager. **Without it the backups can't be opened**, and with it
-anyone can open them, so don't copy it to the server or the backup storage. The script stops with
-an error if `MM_BACKUP_RECIPIENT` isn't set, rather than writing unencrypted backups.
+`MM_BACKUP_RECIPIENT`, and your email as `MM_BACKUP_ALERT_EMAIL`. Keep
+`mining-match-backup-key.txt` (the private key, starting `AGE-SECRET-KEY-`) somewhere safe off
+the server, such as a password manager, ideally with a second copy somewhere else.
+**Without it the backups can't be opened**, and with it anyone can open them, so never put it on
+the server or the backup storage. The script refuses to run if you paste the private key into
+the settings by mistake.
+
+Check the settings at any time (writes nothing):
+
+```sh
+sudo -u miningmatch /srv/mining-match/backup.sh --check
+```
 
 **To restore**, copy the backup files and the key to a safe machine and run:
 
 ```sh
-age -d -i mining-match-backup-key.txt -o mm.db db-YYYY-MM-DD.sqlite.age
+age -d -i mining-match-backup-key.txt db-YYYY-MM-DD.sql.gz.age | gunzip | sqlite3 mm.db
 age -d -i mining-match-backup-key.txt uploads-YYYY-MM-DD.tar.gz.age | tar -xzf -
 ```
 
-Then stop the app, put `mm.db` at `MM_DB` and the uploads folder at `MM_FILES`, and start it again.
+`mm.db` must not exist before the first command. Then stop the app, put `mm.db` at `MM_DB` and
+the uploads folder at `MM_FILES`, and start it again. Test a restore like this before launch, and
+every few months after.
 
 ## Before real candidates sign up
 
@@ -100,7 +122,7 @@ Then stop the app, put `mm.db` at `MM_DB` and the uploads folder at `MM_FILES`, 
 - [ ] Email sends for real (sign up a test account).
 - [ ] Billing settings set and a test invoice checked by your accountant.
 - [ ] Placement terms, privacy policy and candidate terms written by a lawyer and published.
-- [ ] Backup key made and stored off the server; backups run, are copied off the server, and a restore has been tested.
+- [ ] Backup key made and stored off the server; `backup.sh --check` says settings OK; a failure email arrives (e.g. run it once with a wrong key); backups are copied off the server; a restore has been tested.
 - [ ] Independent security test.
 - [ ] Move to PostgreSQL before growing beyond a pilot (not yet built).
 

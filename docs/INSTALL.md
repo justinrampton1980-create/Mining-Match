@@ -33,7 +33,7 @@ Open http://localhost:8000 and log in as the admin. Publish placement terms firs
 ## Run the tests
 
 ```bash
-cd python && python -m unittest           # 174 tests; the 2 browser tests need Playwright and Chrome, the 2 backup tests need the sqlite3 and age tools
+cd python && python -m unittest           # 190 tests; the 2 browser tests need Playwright and Chrome, the 17 backup-script tests need bash, sqlite3, age and flock
 cd ../js && node --test                   # 20 tests
 ```
 
