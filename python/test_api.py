@@ -18,6 +18,7 @@ import api
 import auth
 import billing
 import data_layer as dl
+import reminders
 from storage import LocalStorage, sniff_type
 
 PASSWORD = "Dragline-shift-2026"
@@ -548,7 +549,7 @@ class Website(ApiTest):
 
 class ExpiryReminders(ApiTest):
     def soon(self, days):
-        return (date.today() + timedelta(days=days)).isoformat()
+        return (reminders.local_today() + timedelta(days=days)).isoformat()
 
     def test_reminders_run_and_the_unsubscribe_link_works(self):
         ch, cid = self.candidate()

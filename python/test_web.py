@@ -26,6 +26,7 @@ import api
 import billing
 import auth
 import data_layer as dl
+import reminders
 from storage import LocalStorage
 
 PASSWORD = "Dragline-shift-2026"
@@ -88,7 +89,8 @@ class HiringFlowInBrowser(unittest.TestCase):
 
     # ---------------------------------------------------------------- helpers
     def page(self, viewport=PHONE):
-        context = self.browser.new_context(viewport=viewport, device_scale_factor=2, accept_downloads=True)
+        context = self.browser.new_context(viewport=viewport, device_scale_factor=2, accept_downloads=True,
+                                           timezone_id="Australia/Brisbane")
         page = context.new_page()
         # Expected statuses (401 when logged out, 404 before terms exist) are checked by the API tests;
         # here anything else counts: script errors, blocked content, server errors, missing files.
@@ -149,7 +151,7 @@ class HiringFlowInBrowser(unittest.TestCase):
 
     # ------------------------------------------------------------------ test
     def test_hiring_flow(self):
-        soon = (date.today() + timedelta(days=30)).isoformat()
+        soon = (reminders.local_today() + timedelta(days=30)).isoformat()
 
         # Admin publishes placement terms
         admin = self.page(DESKTOP)
