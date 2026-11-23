@@ -30,6 +30,7 @@ import auth
 import billing
 import data_layer as dl
 import reminders
+import two_factor
 from storage import LocalStorage, sniff_type
 
 # ------------------------------------------------------------------ models
@@ -68,6 +69,20 @@ class LoginIn(In):
     email: Email
     password: Password
     use_cookie: bool = False  # the website: session kept in an HttpOnly cookie, token not returned
+
+
+class TwoFactorIn(In):
+    challenge: Annotated[str, StringConstraints(min_length=10, max_length=200)]
+    code: Annotated[str, StringConstraints(min_length=6, max_length=20)]
+    use_cookie: bool = False
+
+
+class ChallengeIn(In):
+    challenge: Annotated[str, StringConstraints(min_length=10, max_length=200)]
+
+
+class CodeIn(In):
+    code: Annotated[str, StringConstraints(min_length=6, max_length=20)]
 
 
 class TokenIn(In):
@@ -333,6 +348,7 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     app.add_exception_handler(auth.EmailNotVerified, lambda r, e: _error(403, str(e)))
     app.add_exception_handler(auth.AccountSuspended, lambda r, e: _error(403, str(e)))
     app.add_exception_handler(auth.InvalidToken, lambda r, e: _error(400, str(e)))
+    app.add_exception_handler(two_factor.TwoFactorError, lambda r, e: _error(400, str(e)))
     app.add_exception_handler(
         auth.TooManyAttempts, lambda r, e: _error(429, str(e), {"Retry-After": str(e.retry_after)}))
 
@@ -415,16 +431,48 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         auth.resend_verification(conn, mailer, base_url, body.email, client_ip)
         return CHECK_EMAIL
 
-    @app.post("/auth/login", tags=["auth"])
-    def login(body: LoginIn, conn: Conn, client_ip: IP):
-        session = auth.login(conn, body.email, body.password, client_ip)
-        if not body.use_cookie:
+    def _session_response(session: dict, use_cookie: bool):
+        if not use_cookie:
             return session
         token = session.pop("token")
         response = JSONResponse(session)
         response.set_cookie(SESSION_COOKIE, token, max_age=auth.SESSION_MAX_SECONDS, path="/",
                             httponly=True, secure=secure_cookies, samesite="strict")
         return response
+
+    @app.post("/auth/login", tags=["auth"])
+    def login(body: LoginIn, conn: Conn, client_ip: IP):
+        """Admins get {two_factor: "required" | "setup", challenge} instead of a session."""
+        session = auth.login(conn, body.email, body.password, client_ip)
+        if "two_factor" in session:
+            return session
+        return _session_response(session, body.use_cookie)
+
+    @app.post("/auth/login/two-factor", tags=["auth"])
+    def login_two_factor(body: TwoFactorIn, conn: Conn):
+        return _session_response(auth.login_two_factor(conn, body.challenge, body.code), body.use_cookie)
+
+    @app.post("/auth/two-factor/setup", tags=["auth"])
+    def setup_two_factor(body: ChallengeIn, conn: Conn):
+        return auth.setup_two_factor(conn, body.challenge)
+
+    @app.post("/auth/two-factor/setup/confirm", tags=["auth"])
+    def confirm_two_factor(body: TwoFactorIn, conn: Conn):
+        return _session_response(auth.confirm_two_factor(conn, body.challenge, body.code), body.use_cookie)
+
+    @app.get("/auth/two-factor", tags=["auth"])
+    def two_factor_status(me: Me, conn: Conn):
+        return {"enabled": two_factor.is_enabled(conn, me.user_id),
+                "recovery_codes_left": two_factor.recovery_codes_left(conn, me.user_id)}
+
+    @app.post("/auth/two-factor/recovery-codes", tags=["auth"])
+    def new_recovery_codes(body: CodeIn, me: Me, conn: Conn):
+        return {"recovery_codes": two_factor.new_recovery_codes(conn, me.user_id, body.code)}
+
+    @app.post("/admin/users/{user_id}/reset-two-factor", status_code=204, tags=["admin"])
+    def reset_two_factor(user_id: Id, me: Me, conn: Conn):
+        ac.reset_two_factor(conn, me, user_id)
+        return Response(status_code=204)
 
     @app.post("/auth/logout", status_code=204, tags=["auth"])
     def logout(me: Me, conn: Conn, token: Annotated[Optional[str], Depends(bearer)]):

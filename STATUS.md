@@ -51,7 +51,6 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 | Live deployment | The deployment files in `deploy/` have **not been run on a real server**. |
 | Independent security test | Not done. Needed before real candidate data. |
 | Legal documents | Privacy policy, candidate terms and employer terms aren't written. The fee-terms text in the app is a placeholder; a lawyer must write it. |
-| Two-factor login | Not built. Recommended for admin accounts. |
 | Data export (privacy access requests) | No self-service export. Admins can see the data, but there is no download. |
 | Employer account deletion | Candidates can delete their accounts; employers and admins can't (admins can suspend). |
 | Partial payments, adjustment notes, recurring subscriptions | Not built; see the README's invoicing section. |
@@ -86,3 +85,4 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 - **No account enumeration:** sign-up, reset and login reveal nothing about which emails are registered.
 - **Rate limits:** on logins, sign-ups and emails, stored in the database.
 - **Roles:** candidate, employer and admin. The first admin is created from the server's command line, and later admins by invitation.
+- **Two-factor login for admins:** a code from an authenticator app at every admin login, set up on the first one; ten one-time recovery codes; another admin (or the server's command line) can reset it. Candidates and employers log in with a password only.

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 import access_control as ac
 import api
 import auth
+import two_factor
 import billing
 import data_layer as dl
 from storage import LocalStorage, sniff_type
@@ -67,8 +68,11 @@ class ApiTest(unittest.TestCase):
             billing_config=BILLING,
         )
         self.client = TestClient(self.app)
-        conn = dl.connect(self.db)  # first admin, as set up from a terminal
-        ac.create_admin(conn, "admin@example.com", auth.hash_password(PASSWORD))
+        self.totp_secrets, self.totp_now = {}, time.time()
+        conn = dl.connect(self.db)  # first admin, as set up from a terminal, with two-factor already on
+        admin_id = ac.create_admin(conn, "admin@example.com", auth.hash_password(PASSWORD))
+        self.totp_secrets["admin@example.com"] = two_factor.new_secret()
+        two_factor.enable(conn, admin_id, self.totp_secrets["admin@example.com"], 0)
         conn.close()
         self.admin = self.login("admin@example.com")
 
@@ -87,7 +91,27 @@ class ApiTest(unittest.TestCase):
     def login(self, email, password=PASSWORD):
         r = self.client.post("/auth/login", json={"email": email, "password": password})
         self.assertEqual(r.status_code, 200, r.text)
+        if "two_factor" in r.json():  # admins: the second step
+            r = self.two_factor_step(email, r.json())
+            self.assertEqual(r.status_code, 200, r.text)
         return {"Authorization": f"Bearer {r.json()['token']}"}
+
+    def totp(self, email):
+        """The next code from this admin's 'phone' (each call is the next 30-second code)."""
+        self.totp_now += two_factor.STEP
+        return two_factor.code_at(self.totp_secrets[email], int(self.totp_now // two_factor.STEP))
+
+    def two_factor_step(self, email, started, code=None):
+        """Answer a login challenge: set up the app if needed, then send a code."""
+        if started["two_factor"] == "setup":
+            info = self.client.post("/auth/two-factor/setup", json={"challenge": started["challenge"]}).json()
+            self.totp_secrets[email] = info["secret"].replace(" ", "")
+            path = "/auth/two-factor/setup/confirm"
+        else:
+            path = "/auth/login/two-factor"
+        code = code or self.totp(email)
+        with mock.patch.object(two_factor, "clock", lambda: self.totp_now):
+            return self.client.post(path, json={"challenge": started["challenge"], "code": code})
 
     def signup(self, role, email, **profile):
         r = self.client.post(f"/auth/register/{role}", json={"email": email, "password": PASSWORD, **profile})
@@ -474,10 +498,13 @@ class Billing(ApiTest):
             app = api.create_app(str(d / "n.db"), storage=LocalStorage(d / "f"), mailer=auth.Outbox(),
                                  base_url="https://x.example", secure_cookies=False)
             conn = dl.connect(str(d / "n.db"))
-            ac.create_admin(conn, "a@example.com", auth.hash_password(PASSWORD))
+            secret = two_factor.new_secret()
+            two_factor.enable(conn, ac.create_admin(conn, "a@example.com", auth.hash_password(PASSWORD)), secret, 0)
             conn.close()
             with TestClient(app) as c:
-                token = c.post("/auth/login", json={"email": "a@example.com", "password": PASSWORD}).json()["token"]
+                challenge = c.post("/auth/login", json={"email": "a@example.com", "password": PASSWORD}).json()["challenge"]
+                code = two_factor.code_at(secret, two_factor.current_step())
+                token = c.post("/auth/login/two-factor", json={"challenge": challenge, "code": code}).json()["token"]
                 h = {"Authorization": f"Bearer {token}"}
                 self.assertEqual(c.get("/billing/settings", headers=h).json(), {"enabled": False})
                 r = c.post("/invoices/issue-due", headers=h)
@@ -512,10 +539,13 @@ class Website(ApiTest):
             app = api.create_app(str(d / "p.db"), storage=LocalStorage(d / "f"), mailer=auth.Outbox(),
                                  base_url="https://x.example")
             conn = dl.connect(str(d / "p.db"))
-            ac.create_admin(conn, "a@example.com", auth.hash_password(PASSWORD))
+            secret = two_factor.new_secret()
+            two_factor.enable(conn, ac.create_admin(conn, "a@example.com", auth.hash_password(PASSWORD)), secret, 0)
             conn.close()
             with TestClient(app, base_url="https://testserver") as c:
-                r = c.post("/auth/login", json={"email": "a@example.com", "password": PASSWORD, "use_cookie": True})
+                challenge = c.post("/auth/login", json={"email": "a@example.com", "password": PASSWORD}).json()["challenge"]
+                code = two_factor.code_at(secret, two_factor.current_step())
+                r = c.post("/auth/login/two-factor", json={"challenge": challenge, "code": code, "use_cookie": True})
                 self.assertIn("secure", r.headers["set-cookie"].lower())
         finally:
             shutil.rmtree(d)

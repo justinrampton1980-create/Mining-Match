@@ -31,7 +31,7 @@ cd ../js && node --test                                                # 20 test
 1. Virus scanning isn't connected in `api.app_from_environment()`.
 2. Rate limits rely on uvicorn's `--proxy-headers` behind nginx for the real client IP.
 3. SQLite with a single worker; the PostgreSQL move isn't started.
-4. Admins can see every record; there's no two-factor login.
+4. Admins can see every record (their logins need two-factor, `python/two_factor.py`). The TOTP secret is stored as is in the database, as most apps do; someone with a copy of the database could make codes, but would still need the admin's password.
 5. The unsubscribe link page posts automatically when opened, the same as email confirmation. A mail scanner that runs page scripts could turn a candidate's reminders off.
 6. Deployment files have only been partly checked: the uvicorn command was run, but nginx and systemd were not.
 

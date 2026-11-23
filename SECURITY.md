@@ -14,6 +14,12 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Employer candidate searches and job rankings are limited to 100 an hour and 500 a day per employer, so nobody can sweep the whole candidate pool.
 - Rate limits on failed logins: 5 for one account from one IP address, or 30 from one IP address, in 15 minutes; and 100 for one account in an hour from all addresses together. Someone else guessing at an account can't lock its owner out. Emails sent are limited too.
 
+**Two-factor login (admins)**
+- Admins log in with their password and a 6-digit code from an authenticator app (standard TOTP). A correct password alone starts no session; the first login sets up the app before anything else.
+- An admin session only works while two-factor is on, so even a session made some other way can't be used without it.
+- Each code works once; a login allows 5 wrong codes, and an account 10 in 15 minutes.
+- Ten one-time recovery codes, stored hashed, cover a lost phone. Another admin can reset two-factor (logged), or the server's command line can for the only admin (`python two_factor.py reset EMAIL`).
+
 **The website**
 - **Login cookie:** HttpOnly (page scripts can't read it), Secure (HTTPS only) and SameSite=Strict. The server accepts it only with the header `X-Requested-With: mining-match`, which another site can't add, so the cookie can't be used for cross-site request forgery.
 - **Content Security Policy:** scripts load only from the site itself, with no inline scripts, so injected script can't run. The API also sends `X-Content-Type-Options`, `Referrer-Policy` and frame-blocking headers, and over HTTPS a `Strict-Transport-Security` header so browsers never fall back to plain http.
@@ -47,7 +53,6 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 | Gap | What to do |
 |---|---|
 | Uploads aren't virus-scanned in production | Connect ClamAV (installed by the deployment steps) through the `scan_upload` hook in `api.app_from_environment()`. |
-| No two-factor login | Add it, at least for admins. |
 | Single-server SQLite | Move to PostgreSQL; copy the (encrypted) backups off the server. |
 | Deployment files not run on a real server | Test them on the VPS; run `nginx -t`. |
 | No independent security test | Commission one before launch. |

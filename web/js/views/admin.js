@@ -156,6 +156,11 @@ async function usersTab(ctx) {
             u.is_active ? null : h('span', { class: 'badge bad' }, 'Suspended'),
             u.email_verified ? null : h('span', { class: 'badge warn' }, 'Email not confirmed'))),
         h('p', { class: 'meta' }, h('span', {}, u.email), h('span', {}, `Joined ${fmtDate(u.created_at)}`)),
+        u.role === 'admin' && u.user_id !== ctx.me.user_id ? h('div', { class: 'actions' },
+          confirmButton('Reset two-factor', 'Tap again: they’ll set it up again at next login', async () => {
+            await post(`/admin/users/${u.user_id}/reset-two-factor`);
+            toast('Two-factor login reset. They’ve been logged out.');
+          }, { class: 'btn small', 'aria-label': `Reset two-factor login for ${u.email}` })) : null,
         u.user_id === ctx.me.user_id ? h('p', { class: 'small muted' }, 'This is you.') : u.is_active
           ? h('div', { class: 'actions' }, h('div', { class: 'grow' }, reason),
             confirmButton('Suspend', 'Tap again to suspend', async () => {

@@ -26,6 +26,7 @@ import api
 import billing
 import auth
 import data_layer as dl
+import two_factor
 from storage import LocalStorage
 
 PASSWORD = "Dragline-shift-2026"
@@ -76,6 +77,7 @@ class HiringFlowInBrowser(unittest.TestCase):
             cls.server.should_exit = True
             raise unittest.SkipTest(f"Chrome not available: {exc}")
         cls.problems = []
+        cls.totp_secret, cls.totp_now = None, time.time()  # the admin's authenticator app
 
     @classmethod
     def tearDownClass(cls):
@@ -143,6 +145,42 @@ class HiringFlowInBrowser(unittest.TestCase):
         page.get_by_label("Email", exact=True).fill(email)
         page.get_by_label("Password", exact=True).fill(password)
         page.get_by_role("button", name="Log in").click()
+        if email == "admin@miningmatch.example" and password != "wrong-password-1":
+            self.admin_second_step(page)
+
+    def next_code(self):
+        """The admin's next 30-second code (the server's code clock is moved to match)."""
+        type(self).totp_now += two_factor.STEP
+        return two_factor.code_at(self.totp_secret, int(self.totp_now // two_factor.STEP))
+
+    def admin_second_step(self, page):
+        """Set up the authenticator app on the first admin login; enter a code after that."""
+        heading = page.get_by_role("heading", name=re.compile("^(Set up two-factor login|Enter your code)$"))
+        expect(heading).to_be_visible()
+        clock = mock.patch.object(two_factor, "clock", lambda: type(self).totp_now)
+        if heading.inner_text() == "Set up two-factor login":
+            expect(page.locator("img.qr")).to_be_visible()
+            self.assertGreater(page.locator("img.qr").evaluate("img => img.naturalWidth"), 0)
+            type(self).totp_secret = page.locator("code.secret").inner_text().replace(" ", "")
+            self.shot(page, "desktop-0a-two-factor-setup")
+            page.get_by_label("Code from the app").fill("000000")
+            page.get_by_role("button", name="Turn on two-factor login").click()
+            expect(page.locator(".form-error")).to_contain_text("isn't right")
+            page.get_by_label("Code from the app").fill(self.next_code())
+            with clock:
+                page.get_by_role("button", name="Turn on two-factor login").click()
+                expect(page.get_by_role("heading", name="Save your recovery codes")).to_be_visible()
+            expect(page.locator(".recovery-codes li")).to_have_count(10)
+            with page.expect_download() as saved:
+                page.get_by_role("button", name="Download codes").click()
+            self.assertEqual(Path(saved.value.path()).read_text().count("-"), 20)
+            self.shot(page, "desktop-0b-recovery-codes")
+            page.get_by_role("button", name="I’ve saved them, continue").click()
+        else:
+            page.get_by_label("Code", exact=True).fill(self.next_code())
+            with clock:
+                page.get_by_role("button", name="Continue").click()
+                expect(page.get_by_role("heading", name="Enter your code")).to_be_hidden()
 
     def toast(self, page, text):
         expect(page.locator("#toast")).to_contain_text(text)
@@ -372,6 +410,11 @@ class HiringFlowInBrowser(unittest.TestCase):
         self.toast(admin, "Account suspended")
         emp.get_by_role("link", name="Jobs").click()
         expect(emp.get_by_role("heading", name="Log in")).to_be_visible()  # logged out straight away
+
+        # Admin's account page: two-factor is on, with all recovery codes left
+        admin.get_by_role("link", name="Account", exact=True).click()
+        expect(admin.get_by_role("heading", name="Two-factor login")).to_be_visible()
+        expect(admin.get_by_text("10 recovery codes left.")).to_be_visible()
 
         # Candidate logs out from the account page
         cand.get_by_role("link", name="Account").click()

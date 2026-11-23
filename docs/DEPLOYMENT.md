@@ -50,6 +50,9 @@ sudo chown root:miningmatch /etc/mining-match.env && sudo chmod 640 /etc/mining-
 # 4. Database and the first admin (once)
 sudo -u miningmatch bash -c 'set -a; . /etc/mining-match.env; cd /srv/mining-match/app/python && /srv/mining-match/venv/bin/python -c "import os, data_layer as dl, access_control as ac, auth; c = dl.connect(os.environ[\"MM_DB\"]); dl.init_schema(c); dl.seed_catalog(c); ac.create_admin(c, input(\"Admin email: \"), auth.hash_password(input(\"Password: \")))"'
 
+# The first time this admin logs in on the website, they set up two-factor login: have an
+# authenticator app ready (Google Authenticator, Microsoft Authenticator, 1Password...).
+
 # 5. Service, web server, HTTPS
 sudo cp /srv/mining-match/app/deploy/mining-match.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now mining-match
@@ -67,6 +70,19 @@ sudo crontab -u miningmatch /srv/mining-match/app/deploy/crontab
 ```
 
 Point your domain's DNS (an A record) at the VPS's IP address before running certbot.
+
+## Two-factor login for admins
+
+Every admin login needs the password and a code from an authenticator app. The first login sets
+the app up and shows ten recovery codes once: keep them in a password manager. If an admin loses
+their phone, another admin can press "Reset two-factor" on their account (Admin, then Accounts).
+If the only admin is locked out, reset it on the server:
+
+```sh
+sudo -u miningmatch bash -c 'set -a; . /etc/mining-match.env; cd /srv/mining-match/app/python && /srv/mining-match/venv/bin/python two_factor.py reset admin@example.com'
+```
+
+The phone's clock must be right (automatic time); the server's is kept right by Ubuntu.
 
 ## Backups
 
@@ -120,6 +136,7 @@ every few months after.
 - [ ] Connect virus scanning of uploads (see SECURITY.md). **Not yet built into the production app.**
 - [ ] `MM_SECURE_COOKIES` unset or `1`, `MM_DOCS=0`, `MM_BASE_URL` is the https address.
 - [ ] Email sends for real (sign up a test account).
+- [ ] Every admin has set up two-factor login and saved their recovery codes; a second admin exists, so one can reset the other.
 - [ ] Billing settings set and a test invoice checked by your accountant.
 - [ ] Placement terms, privacy policy and candidate terms written by a lawyer and published.
 - [ ] Backup key made and stored off the server; `backup.sh --check` says settings OK; a failure email arrives (e.g. run it once with a wrong key); backups are copied off the server; a restore has been tested.
