@@ -74,6 +74,28 @@ class TokenIn(In):
     token: Token
 
 
+Code = Annotated[str, StringConstraints(strip_whitespace=True, min_length=6, max_length=20)]
+
+
+class LoginCodeIn(In):
+    challenge: Token
+    code: Code  # 6 digits from the authenticator app, or a backup code
+    use_cookie: bool = False
+
+
+class PasswordIn(In):
+    password: Password
+
+
+class CodeIn(In):
+    code: Code
+
+
+class PasswordCodeIn(In):
+    password: Password
+    code: Code
+
+
 class EmailIn(In):
     email: Email
 
@@ -266,7 +288,8 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
                scan_upload: Optional[Callable[[bytes], bool]] = None,
                cors_origins: tuple = (), enable_docs: bool = True,
                web_dir: Optional[Path] = WEB_DIR, secure_cookies: bool = True,
-               billing_config: Optional[billing.BillingConfig] = None) -> FastAPI:
+               billing_config: Optional[billing.BillingConfig] = None,
+               require_admin_two_factor: bool = True) -> FastAPI:
     """Build the API.
 
     db_path      SQLite file (created and set up if needed)
@@ -277,6 +300,8 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     web_dir      folder with the website (served at /); None to serve the API only
     secure_cookies  send the session cookie over HTTPS only (turn off only for local testing)
     billing_config  invoicing settings (business name, ABN, bank details); None turns invoicing off
+    require_admin_two_factor  admins without two-factor login can only reach /me and /auth/... (to
+                 set it up) until they turn it on. Leave on in production.
     """
     setup = dl.connect(db_path)
     dl.init_schema(setup)
@@ -357,19 +382,32 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
             return cookie
         return None
 
-    def current(conn: Conn, token: Annotated[Optional[str], Depends(bearer)]) -> ac.Principal:
+    def admin_must_set_up_two_factor(conn, principal: ac.Principal) -> bool:
+        return (require_admin_two_factor and principal.role == "admin"
+                and not auth.two_factor_enabled(conn, principal.user_id))
+
+    def current(request: Request, conn: Conn, token: Annotated[Optional[str], Depends(bearer)]) -> ac.Principal:
         user_id = auth.session_user(conn, token)
         if user_id is None:
             raise _NotLoggedIn()
         try:
-            return ac.principal_for_user(conn, user_id)
+            principal = ac.principal_for_user(conn, user_id)
         except ac.AccessDenied:
             raise _NotLoggedIn() from None
+        path = request.url.path
+        if admin_must_set_up_two_factor(conn, principal) and not (path == "/me" or path.startswith("/auth/")):
+            raise _TwoFactorNeeded()
+        return principal
 
     class _NotLoggedIn(Exception):
         pass
 
+    class _TwoFactorNeeded(Exception):
+        pass
+
     app.add_exception_handler(_NotLoggedIn, lambda r, e: _error(401, "log in first", {"WWW-Authenticate": "Bearer"}))
+    app.add_exception_handler(_TwoFactorNeeded, lambda r, e: _error(
+        403, "administrators must turn on two-factor login first (Account page)"))
     Me = Annotated[ac.Principal, Depends(current)]
 
     def ip(request: Request) -> str:
@@ -408,16 +446,51 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         auth.resend_verification(conn, mailer, base_url, body.email, client_ip)
         return CHECK_EMAIL
 
-    @app.post("/auth/login", tags=["auth"])
-    def login(body: LoginIn, conn: Conn, client_ip: IP):
-        session = auth.login(conn, body.email, body.password, client_ip)
-        if not body.use_cookie:
-            return session
+    def session_reply(session: dict, use_cookie: bool):
+        if not use_cookie or session.get("two_factor_required"):
+            return session  # a challenge is only half a login: it goes back to the page, never in the cookie
         token = session.pop("token")
         response = JSONResponse(session)
         response.set_cookie(SESSION_COOKIE, token, max_age=auth.SESSION_MAX_SECONDS, path="/",
                             httponly=True, secure=secure_cookies, samesite="strict")
         return response
+
+    @app.post("/auth/login", tags=["auth"])
+    def login(body: LoginIn, conn: Conn, client_ip: IP):
+        """Returns a session, or {two_factor_required: true, challenge} for /auth/login/code."""
+        return session_reply(auth.login(conn, body.email, body.password, client_ip), body.use_cookie)
+
+    @app.post("/auth/login/code", tags=["auth"])
+    def login_code(body: LoginCodeIn, conn: Conn, client_ip: IP):
+        session = auth.login_with_code(conn, mailer, base_url, body.challenge, body.code, client_ip)
+        return session_reply(session, body.use_cookie)
+
+    @app.get("/auth/two-factor", tags=["auth"])
+    def two_factor_status(me: Me, conn: Conn):
+        return {**auth.two_factor_status(conn, me.user_id), "required": require_admin_two_factor and me.role == "admin"}
+
+    @app.post("/auth/two-factor/setup", tags=["auth"])
+    def two_factor_setup(body: PasswordIn, me: Me, conn: Conn, token: Annotated[Optional[str], Depends(bearer)]):
+        """Step 1: returns {secret, setup_link} to add to an authenticator app."""
+        return auth.begin_two_factor_setup(conn, token, body.password)
+
+    @app.post("/auth/two-factor/enable", tags=["auth"])
+    def two_factor_enable(body: CodeIn, me: Me, conn: Conn, token: Annotated[Optional[str], Depends(bearer)]):
+        """Step 2: a code from the app turns it on. Returns {recovery_codes}, shown only this once."""
+        return auth.confirm_two_factor_setup(conn, mailer, base_url, token, body.code)
+
+    @app.post("/auth/two-factor/disable", tags=["auth"])
+    def two_factor_disable(body: PasswordCodeIn, me: Me, conn: Conn,
+                           token: Annotated[Optional[str], Depends(bearer)]):
+        if require_admin_two_factor and me.role == "admin":
+            raise ValueError("administrators must keep two-factor login on")
+        auth.disable_two_factor(conn, mailer, base_url, token, body.password, body.code)
+        return {"detail": "Two-factor login is off."}
+
+    @app.post("/auth/two-factor/recovery-codes", tags=["auth"])
+    def two_factor_new_codes(body: PasswordCodeIn, me: Me, conn: Conn,
+                             token: Annotated[Optional[str], Depends(bearer)]):
+        return auth.regenerate_backup_codes(conn, token, body.password, body.code)
 
     @app.post("/auth/logout", status_code=204, tags=["auth"])
     def logout(me: Me, conn: Conn, token: Annotated[Optional[str], Depends(bearer)]):
@@ -446,7 +519,9 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     def whoami(me: Me, conn: Conn):
         email = conn.execute("SELECT email FROM users WHERE id = ?", (me.user_id,)).fetchone()["email"]
         return {"user_id": me.user_id, "role": me.role, "email": email,
-                "candidate_id": me.candidate_id, "employer_id": me.employer_id}
+                "candidate_id": me.candidate_id, "employer_id": me.employer_id,
+                "two_factor": auth.two_factor_enabled(conn, me.user_id),
+                "must_set_up_two_factor": admin_must_set_up_two_factor(conn, me)}
 
     # ========================================================== candidates
     @app.get("/candidates/{candidate_id}", tags=["candidates"])
@@ -751,6 +826,13 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         ac.set_user_active(conn, me, user_id, body.active, body.reason)
         return {"ok": True}
 
+    @app.post("/admin/users/{user_id}/reset-two-factor", tags=["admin"])
+    def reset_two_factor(user_id: Id, body: ReasonIn, me: Me, conn: Conn):
+        """For someone who lost their phone and backup codes. Confirm who they are first."""
+        ac.reset_two_factor(conn, me, user_id, body.reason)
+        auth.notify_two_factor_reset(conn, mailer, base_url, user_id)
+        return {"ok": True}
+
     @app.post("/admin/admins", status_code=201, tags=["admin"])
     def create_admin(body: EmailIn, me: Me, conn: Conn):
         user_id = ac.create_admin(conn, auth._normalise_email(body.email), by=me)
@@ -805,6 +887,7 @@ def app_from_environment() -> FastAPI:
         enable_docs=os.environ.get("MM_DOCS", "1") == "1",
         secure_cookies=os.environ.get("MM_SECURE_COOKIES", "1") == "1",
         billing_config=billing.BillingConfig.from_env(),
+        require_admin_two_factor=os.environ.get("MM_REQUIRE_ADMIN_2FA", "1") == "1",
     )
 
 

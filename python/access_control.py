@@ -59,7 +59,7 @@ __all__ = [
     "rank_candidates_for_job", "search_candidates", "rank_jobs_for_candidate",
     "create_shortlist", "list_shortlists", "add_to_shortlist", "set_shortlist_status",
     "remove_from_shortlist", "get_shortlist",
-    "set_user_active", "create_admin", "read_audit_log", "list_users", "list_documents_to_verify",
+    "set_user_active", "reset_two_factor", "create_admin", "read_audit_log", "list_users", "list_documents_to_verify",
     "list_catalog",
 ]
 
@@ -993,6 +993,26 @@ def set_user_active(conn, principal, user_id: str, active: bool, reason: Optiona
     _ok(conn, p, action, "user", user_id, ("reactivated" if active else "suspended") + (f": {reason}" if reason else ""))
 
 
+def reset_two_factor(conn, principal, user_id: str, reason: Optional[str] = None) -> None:
+    """Turn off someone's two-factor login (they lost their phone and backup codes) and log them
+    out everywhere. Check who is asking first: this is how an account thief would try to get in.
+
+    reason: short and free of personal details; it goes into the audit log.
+    """
+    action = "user.reset_two_factor"
+    p = _authorize(conn, principal, action, "admin")
+    if user_id == p.user_id:
+        _deny(conn, p, action, "user", user_id, "another admin must reset your own two-factor login")
+    if conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
+        raise dl.NotFoundError(f"user not found: {user_id}")
+    with conn:
+        conn.execute("DELETE FROM two_factor WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM recovery_codes WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM login_challenges WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    _ok(conn, p, action, "user", user_id, "two-factor login reset" + (f": {reason}" if reason else ""))
+
+
 def create_admin(conn, email: str, password_hash: Optional[str] = None, *, by: Optional[Principal] = None) -> str:
     """Create an admin account. Returns the user id.
 
@@ -1036,6 +1056,7 @@ def list_users(conn, principal, *, search: Optional[str] = None, role: Optional[
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     rows = conn.execute(
         "SELECT u.id AS user_id, u.email, u.role, u.is_active, u.email_verified_at IS NOT NULL AS email_verified, "
+        "EXISTS (SELECT 1 FROM two_factor t WHERE t.user_id = u.id AND t.enabled_at IS NOT NULL) AS two_factor, "
         "u.created_at, c.id AS candidate_id, c.name AS candidate_name, e.id AS employer_id, e.company_name "
         "FROM users u LEFT JOIN candidates c ON c.user_id = u.id LEFT JOIN employers e ON e.user_id = u.id "
         f"{clause} ORDER BY u.created_at DESC, u.id LIMIT ?",
@@ -1045,7 +1066,8 @@ def list_users(conn, principal, *, search: Optional[str] = None, role: Optional[
     out = []
     for r in rows:
         row = dict(r)
-        row["is_active"], row["email_verified"] = bool(row["is_active"]), bool(row["email_verified"])
+        for key in ("is_active", "email_verified", "two_factor"):
+            row[key] = bool(row[key])
         out.append(row)
     return out
 

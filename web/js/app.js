@@ -85,6 +85,7 @@ async function render({ soft = false, focus = null } = {}) {
   if (r.public && me && !r.anyone) return go(HOME[me.role]);
   if (!r.public && !me) return go('/login');
   if (r.roles && !r.roles.includes(me.role)) return go(HOME[me.role]);
+  if (me && me.must_set_up_two_factor && path !== '/account') return go('/account');
 
   const id = ++renderCount;
   const main = document.getElementById('main');

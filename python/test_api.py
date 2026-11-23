@@ -17,6 +17,7 @@ import api
 import auth
 import billing
 import data_layer as dl
+import two_factor as tf
 from storage import LocalStorage, sniff_type
 
 PASSWORD = "Dragline-shift-2026"
@@ -70,6 +71,7 @@ class ApiTest(unittest.TestCase):
         ac.create_admin(conn, "admin@example.com", auth.hash_password(PASSWORD))
         conn.close()
         self.admin = self.login("admin@example.com")
+        self.admin_secret, _ = self.enable_two_factor(self.admin)  # admins must have it on
 
     def tearDown(self):
         self.client.close()
@@ -87,6 +89,16 @@ class ApiTest(unittest.TestCase):
         r = self.client.post("/auth/login", json={"email": email, "password": password})
         self.assertEqual(r.status_code, 200, r.text)
         return {"Authorization": f"Bearer {r.json()['token']}"}
+
+    def enable_two_factor(self, headers, password=PASSWORD):
+        """Turn on two-factor login for a session's account. Returns (secret, backup codes)."""
+        r = self.client.post("/auth/two-factor/setup", json={"password": password}, headers=headers)
+        self.assertEqual(r.status_code, 200, r.text)
+        secret = r.json()["secret"]
+        r = self.client.post("/auth/two-factor/enable", headers=headers,
+                             json={"code": tf.code_at(secret, tf.current_step(auth.clock()))})
+        self.assertEqual(r.status_code, 200, r.text)
+        return secret, r.json()["recovery_codes"]
 
     def signup(self, role, email, **profile):
         r = self.client.post(f"/auth/register/{role}", json={"email": email, "password": PASSWORD, **profile})
@@ -430,7 +442,8 @@ class Billing(ApiTest):
         d = Path(tempfile.mkdtemp())
         try:
             app = api.create_app(str(d / "n.db"), storage=LocalStorage(d / "f"), mailer=auth.Outbox(),
-                                 base_url="https://x.example", secure_cookies=False)
+                                 base_url="https://x.example", secure_cookies=False,
+                                 require_admin_two_factor=False)  # about invoicing, not login
             conn = dl.connect(str(d / "n.db"))
             ac.create_admin(conn, "a@example.com", auth.hash_password(PASSWORD))
             conn.close()

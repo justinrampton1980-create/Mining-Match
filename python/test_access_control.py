@@ -129,6 +129,7 @@ GRID = [
                                            ac.set_shortlist_status(w.conn, p, w.s1, w.c1, "contacted")), {"e1", "admin"}),
     ("remove_from_shortlist", lambda w, p: ac.remove_from_shortlist(w.conn, p, w.s1, w.c1), {"e1", "admin"}),
     ("set_user_active", lambda w, p: ac.set_user_active(w.conn, p, w.users["c2"], False), {"admin"}),
+    ("reset_two_factor", lambda w, p: ac.reset_two_factor(w.conn, p, w.users["c2"], "lost phone"), {"admin"}),
     ("read_audit_log", lambda w, p: ac.read_audit_log(w.conn, p), {"admin"}),
     ("list_users", lambda w, p: ac.list_users(w.conn, p, search="jordan"), {"admin"}),
     ("list_documents_to_verify", lambda w, p: ac.list_documents_to_verify(w.conn, p), {"admin"}),

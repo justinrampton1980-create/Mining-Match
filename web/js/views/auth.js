@@ -24,26 +24,59 @@ export async function login(ctx) {
   const password = input({ type: 'password', autocomplete: 'current-password', required: true, name: 'password' });
   const error = errorArea();
   const resend = h('p', { class: 'small' });
+  const panel = h('section', { class: 'panel stack', 'aria-labelledby': 'login-title' });
   const form = onSubmit(h('form', { class: 'stack' },
     field('Email', email), field('Password', password), error.el, resend,
     h('button', { type: 'submit', class: 'btn primary' }, 'Log in')), error, async () => {
     resend.replaceChildren();
+    let result;
     try {
-      await post('/auth/login', { email: email.value, password: password.value, use_cookie: true });
+      result = await post('/auth/login', { email: email.value, password: password.value, use_cookie: true });
     } catch (err) {
       if (err.status === 403 && /confirm/i.test(err.message)) {
         resend.replaceChildren(h('a', { href: `#/check-email?email=${encodeURIComponent(email.value)}` }, 'Send a new confirmation link'));
       }
       throw err;
     }
+    if (result.two_factor_required) {
+      password.value = '';
+      panel.replaceChildren(...codeStep(ctx, result.challenge));
+      panel.querySelector('input').focus();
+      return;
+    }
     await ctx.refresh();
     ctx.go(ctx.home());
   });
-  return h('div', { class: 'auth' }, hero(),
-    h('section', { class: 'panel stack', 'aria-labelledby': 'login-title' },
-      h('h2', { id: 'login-title' }, 'Log in'), form,
-      h('p', { class: 'small' }, h('a', { href: '#/forgot-password' }, 'Forgot your password?')),
-      h('p', { class: 'small' }, 'New to Mining Match? ', h('a', { href: '#/signup' }, 'Create an account'))));
+  panel.append(h('h2', { id: 'login-title' }, 'Log in'), form,
+    h('p', { class: 'small' }, h('a', { href: '#/forgot-password' }, 'Forgot your password?')),
+    h('p', { class: 'small' }, 'New to Mining Match? ', h('a', { href: '#/signup' }, 'Create an account')));
+  return h('div', { class: 'auth' }, hero(), panel);
+}
+
+// Second step for accounts with two-factor login: the challenge stays in memory only.
+function codeStep(ctx, challenge) {
+  const code = input({ autocomplete: 'one-time-code', inputmode: 'numeric', required: true, maxlength: '20', spellcheck: 'false' });
+  const error = errorArea();
+  const form = onSubmit(h('form', { class: 'stack' },
+    field('Code', code, 'The 6-digit code from your authenticator app. Lost your phone? Type one of your backup codes instead.'),
+    error.el, h('button', { type: 'submit', class: 'btn primary' }, 'Continue')), error, async () => {
+    try {
+      await post('/auth/login/code', { challenge, code: code.value, use_cookie: true });
+    } catch (err) {
+      code.value = '';
+      if (err.status === 400) { // timed out or too many tries: start again
+        toast(err.message, 'bad');
+        ctx.reload('h2');
+        return;
+      }
+      throw err;
+    }
+    await ctx.refresh();
+    ctx.go(ctx.home());
+  });
+  return [h('h2', { id: 'login-title' }, 'Enter your code'),
+    h('p', {}, 'Your account has two-factor login turned on.'), form,
+    h('p', { class: 'small' }, h('a', { href: '#/login', onclick: (e) => { e.preventDefault(); ctx.reload('h2'); } }, 'Start again'))];
 }
 
 export async function signup(ctx) {

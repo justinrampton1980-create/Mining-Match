@@ -26,6 +26,7 @@ import api
 import billing
 import auth
 import data_layer as dl
+import two_factor as tf
 from storage import LocalStorage
 
 PASSWORD = "Dragline-shift-2026"
@@ -144,6 +145,19 @@ class HiringFlowInBrowser(unittest.TestCase):
         page.get_by_label("Password", exact=True).fill(password)
         page.get_by_role("button", name="Log in").click()
 
+    def next_code(self, email):
+        """A valid code newer than the last one used (a code never works twice)."""
+        conn = dl.connect(str(self.dir / "mm.db"))
+        last = conn.execute("SELECT t.last_step FROM two_factor t JOIN users u ON u.id = t.user_id WHERE u.email = ?",
+                            (email,)).fetchone()[0]
+        conn.close()
+        while True:
+            here = tf.current_step(time.time())
+            step = max(last + 1, here - tf.DRIFT_STEPS)
+            if step <= here + tf.DRIFT_STEPS:
+                return tf.code_at(type(self).admin_secret, step)
+            time.sleep(1)
+
     def toast(self, page, text):
         expect(page.locator("#toast")).to_contain_text(text)
 
@@ -156,6 +170,29 @@ class HiringFlowInBrowser(unittest.TestCase):
         admin.goto(self.base)
         expect(admin.get_by_role("heading", name="Your tickets, matched to real jobs.")).to_be_visible()
         self.log_in(admin, "admin@miningmatch.example")
+        # Admins must turn on two-factor login before anything else.
+        expect(admin.get_by_text("Administrators must turn this on")).to_be_visible()
+        admin.get_by_label("Your password").fill(PASSWORD)
+        admin.get_by_role("button", name="Set up two-factor login").click()
+        expect(admin.get_by_role("link", name="Add to authenticator app")).to_have_attribute("href", re.compile("^otpauth://totp/"))
+        secret = admin.locator(".secret-key").inner_text().replace(" ", "")
+        type(self).admin_secret = secret  # the other test logs in as this admin too
+        admin.get_by_label("Code from the app").fill(tf.code_at(secret, tf.current_step(time.time())))
+        self.shot(admin, "desktop-0-admin-two-factor-setup")
+        admin.get_by_role("button", name="Turn on").click()
+        expect(admin.locator(".backup-codes li")).to_have_count(10)
+        admin.get_by_role("button", name="I’ve saved them").click()
+        expect(admin.get_by_role("heading", name="Publish version 1")).to_be_visible()
+        # Logging in again now asks for a code (the next one: a code never works twice).
+        admin.locator("#nav").get_by_role("link", name="Account").click()
+        admin.get_by_role("button", name="Log out").click()
+        self.log_in(admin, "admin@miningmatch.example")
+        expect(admin.get_by_role("heading", name="Enter your code")).to_be_visible()
+        admin.get_by_label("Code", exact=True).fill("000000")
+        admin.get_by_role("button", name="Continue").click()
+        expect(admin.get_by_role("alert")).to_contain_text("that code didn't work")
+        admin.get_by_label("Code", exact=True).fill(self.next_code("admin@miningmatch.example"))
+        admin.get_by_role("button", name="Continue").click()
         expect(admin.get_by_role("heading", name="Publish version 1")).to_be_visible()
         admin.get_by_label("Full terms").fill("1. Placement fee\nA fee of 12% of first-year base salary applies ...")
         self.shot(admin, "desktop-0-admin-terms")
@@ -401,6 +438,10 @@ class HiringFlowInBrowser(unittest.TestCase):
         expect(page.get_by_role("heading", name="Password saved")).to_be_visible()
         page.get_by_role("link", name="Log in").click()
         self.log_in(page, "admin@miningmatch.example", "Brand-New-Pass-2027")
+        # a new password doesn't get round two-factor login
+        expect(page.get_by_role("heading", name="Enter your code")).to_be_visible()
+        page.get_by_label("Code", exact=True).fill(self.next_code("admin@miningmatch.example"))
+        page.get_by_role("button", name="Continue").click()
         expect(page.get_by_role("heading", name="Admin")).to_be_visible()
         # put the password back for the other test
         conn = dl.connect(str(self.dir / "mm.db"))

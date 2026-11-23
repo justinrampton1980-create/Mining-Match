@@ -154,8 +154,10 @@ async function usersTab(ctx) {
           h('span', { class: 'actions' },
             h('span', { class: 'badge' }, u.role),
             u.is_active ? null : h('span', { class: 'badge bad' }, 'Suspended'),
-            u.email_verified ? null : h('span', { class: 'badge warn' }, 'Email not confirmed'))),
+            u.email_verified ? null : h('span', { class: 'badge warn' }, 'Email not confirmed'),
+            u.two_factor ? h('span', { class: 'badge ok' }, 'Two-factor on') : null)),
         h('p', { class: 'meta' }, h('span', {}, u.email), h('span', {}, `Joined ${fmtDate(u.created_at)}`)),
+        u.two_factor && u.user_id !== ctx.me.user_id ? resetTwoFactor(ctx, u) : null,
         u.user_id === ctx.me.user_id ? h('p', { class: 'small muted' }, 'This is you.') : u.is_active
           ? h('div', { class: 'actions' }, h('div', { class: 'grow' }, reason),
             confirmButton('Suspend', 'Tap again to suspend', async () => {
@@ -169,6 +171,19 @@ async function usersTab(ctx) {
             ctx.reload('h1');
           }, { class: 'btn small' })));
     })) : h('p', { class: 'empty' }, 'No accounts found.'));
+}
+
+// For someone who lost their phone and backup codes. Account thieves ask for this too, so check
+// who you're talking to first (e.g. call the number on file).
+function resetTwoFactor(ctx, u) {
+  const reason = input({ placeholder: 'How you checked who they are', 'aria-label': `Reason for resetting two-factor login for ${u.email}`, maxlength: '200' });
+  return h('div', { class: 'actions' }, h('div', { class: 'grow' }, reason),
+    confirmButton('Reset two-factor', 'Tap again: they can log in with just a password', async () => {
+      if (!reason.value.trim()) throw new Error('Say how you checked who they are first.');
+      await post(`/admin/users/${u.user_id}/reset-two-factor`, { reason: reason.value });
+      toast('Two-factor login reset. They were logged out and emailed.');
+      ctx.reload('h1');
+    }, { class: 'btn small' }));
 }
 
 async function documentsTab(ctx) {

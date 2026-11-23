@@ -15,6 +15,11 @@ Security choices
   * Failed logins are limited per email and per IP address.
   * Emailed links put the token after "#", which browsers never send to any server or
     include in the Referer header, so it can't leak into logs.
+  * Two-factor login (optional for everyone, required for admins by the API): with it on, the
+    right password alone only earns a short-lived challenge, which needs a code from the
+    person's authenticator app (or a one-time backup code) to become a session. Wrong codes
+    are limited per login attempt, per account and per IP address. Turning it on or off, and
+    using a backup code, are emailed to the account so the owner hears about it.
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ from email.message import EmailMessage
 from typing import Optional, Protocol
 
 import data_layer as dl
+import two_factor as tf
 
 # ---------------------------------------------------------------- settings
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2 ** 14, 8, 1
@@ -48,6 +54,9 @@ LOGIN_FAILS_PER_IP = (30, 15 * 60)
 RESET_REQUESTS_PER_EMAIL = (3, 3600)
 EMAILS_PER_IP = (20, 3600)  # sign-ups, resends and reset requests from one address
 RESENDS_PER_EMAIL = (3, 3600)
+CODE_FAILS_PER_USER = (10, 15 * 60)  # wrong two-factor codes for one account, across attempts
+CHALLENGE_SECONDS = 5 * 60           # time to type the code after the password
+CHALLENGE_TRIES = 5                  # wrong codes before the password must be entered again
 
 COMMON_PASSWORDS = frozenset({
     "password123", "password1234", "qwertyuiop", "1234567890", "123456789a", "iloveyou12",
@@ -327,7 +336,11 @@ def resend_verification(conn, mailer: Mailer, base_url: str, email: str, ip: str
 
 # ------------------------------------------------------------------ login
 def login(conn, email: str, password: str, ip: str) -> dict:
-    """Check the password and start a session. Returns {token, expires_at, user_id, role}."""
+    """Check the password and start a session. Returns {token, expires_at, user_id, role}.
+
+    With two-factor login on, returns {two_factor_required: True, challenge, expires_at} instead:
+    pass the challenge and a code to login_with_code to get the session.
+    """
     try:
         email = _normalise_email(email)
     except ValueError:
@@ -351,14 +364,65 @@ def login(conn, email: str, password: str, ip: str) -> dict:
         raise AccountSuspended("this account is suspended, contact support")
     if row["email_verified_at"] is None:
         raise EmailNotVerified("confirm your email address first (check your inbox)")
+    if two_factor_enabled(conn, row["id"]):
+        return _issue_challenge(conn, row["id"])
+    return _start_session(conn, row["id"], row["role"])
+
+
+def _start_session(conn, user_id: str, role: str) -> dict:
     token, now = secrets.token_urlsafe(32), clock()
     with conn:
-        conn.execute("DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?", (row["id"], now))
+        conn.execute("DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?", (user_id, now))
         conn.execute(
             "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
-            (_hash_token(token), row["id"], now, now + SESSION_MAX_SECONDS, now),
+            (_hash_token(token), user_id, now, now + SESSION_MAX_SECONDS, now),
         )
-    return {"token": token, "expires_at": now + SESSION_MAX_SECONDS, "user_id": row["id"], "role": row["role"]}
+    return {"token": token, "expires_at": now + SESSION_MAX_SECONDS, "user_id": user_id, "role": role,
+            "two_factor_required": False}
+
+
+def _issue_challenge(conn, user_id: str) -> dict:
+    challenge, now = secrets.token_urlsafe(32), clock()
+    with conn:
+        conn.execute("DELETE FROM login_challenges WHERE expires_at <= ?", (now,))
+        conn.execute("INSERT INTO login_challenges (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                     (_hash_token(challenge), user_id, now + CHALLENGE_SECONDS))
+    return {"two_factor_required": True, "challenge": challenge, "expires_at": now + CHALLENGE_SECONDS}
+
+
+def login_with_code(conn, mailer: Mailer, base_url: str, challenge: str, code: str, ip: str) -> dict:
+    """Second step of login: a code from the authenticator app, or a backup code. Returns a session."""
+    _limit(conn, "login_ip", ip, LOGIN_FAILS_PER_IP, "too many failed logins from this address, try again later")
+    row = conn.execute("SELECT token_hash, user_id, expires_at, failures FROM login_challenges WHERE token_hash = ?",
+                       (_hash_token(str(challenge or "")),)).fetchone()
+    if row is None or row["expires_at"] <= clock():
+        raise InvalidToken("this login has timed out, enter your email and password again")
+    user_id = row["user_id"]
+    _limit(conn, "code_user", user_id, CODE_FAILS_PER_USER, "too many wrong codes for this account, try again later")
+    how = _use_second_factor(conn, user_id, code)
+    if how is None:
+        _record(conn, "login_ip", ip)
+        _record(conn, "code_user", user_id)
+        with conn:
+            if row["failures"] + 1 >= CHALLENGE_TRIES:
+                conn.execute("DELETE FROM login_challenges WHERE token_hash = ?", (row["token_hash"],))
+            else:
+                conn.execute("UPDATE login_challenges SET failures = failures + 1 WHERE token_hash = ?",
+                             (row["token_hash"],))
+        raise InvalidCredentials("that code didn't work, try the newest one from your app")
+    with conn:
+        conn.execute("DELETE FROM login_challenges WHERE token_hash = ?", (row["token_hash"],))
+    user = conn.execute("SELECT email, role, is_active FROM users WHERE id = ?", (user_id,)).fetchone()
+    if user is None or not user["is_active"]:  # suspended between the two steps
+        raise AccountSuspended("this account is suspended, contact support")
+    session = _start_session(conn, user_id, user["role"])
+    if how == "backup":
+        left = two_factor_status(conn, user_id)["backup_codes_left"]
+        _notify(mailer, base_url, user["email"], "A backup code was used to log in to Mining Match",
+                f"Someone logged in to your account with one of your two-factor backup codes. "
+                f"You have {left} backup code{'s' if left != 1 else ''} left; you can make new ones on "
+                f"your Account page.")
+    return session
 
 
 def session_user(conn, token: Optional[str]) -> Optional[str]:
@@ -399,6 +463,149 @@ def change_password(conn, token: str, current_password: str, new_password: str) 
     with conn:
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(new_password), user_id))
         conn.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, _hash_token(token)))
+        conn.execute("DELETE FROM login_challenges WHERE user_id = ?", (user_id,))
+
+
+# --------------------------------------------------------- two-factor login
+def _notify(mailer: Mailer, base_url: str, email: str, subject: str, what: str) -> None:
+    mailer.send(email, subject,
+                f"{what}\n\nIf this wasn't you, someone may have your password. Reset it now:\n"
+                f"{base_url}/#/forgot-password\n\nthen contact Mining Match support.")
+
+
+def _logged_in_user(conn, token: str) -> str:
+    user_id = session_user(conn, token)
+    if user_id is None:
+        raise InvalidCredentials("not logged in")
+    return user_id
+
+
+def _check_password(conn, user_id: str, password: str):
+    row = conn.execute("SELECT email, role, password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not verify_password(str(password), row["password_hash"]):
+        raise InvalidCredentials("password is wrong")
+    return row
+
+
+def _use_second_factor(conn, user_id: str, code: str) -> Optional[str]:
+    """'app' or 'backup' if the code is good (and uses it up), else None."""
+    row = conn.execute("SELECT secret, last_step FROM two_factor WHERE user_id = ? AND enabled_at IS NOT NULL",
+                       (user_id,)).fetchone()
+    if row is None:
+        return None
+    step = tf.match_code(tf.unseal(row["secret"]), code, clock(), row["last_step"])
+    if step is not None:
+        with conn:  # only one request can move last_step forward, so a code can't be used twice
+            used = conn.execute("UPDATE two_factor SET last_step = ? WHERE user_id = ? AND last_step < ?",
+                                (step, user_id, step)).rowcount
+        return "app" if used else None
+    backup = tf.normalise_recovery_code(code)
+    if backup is None:
+        return None
+    with conn:
+        used = conn.execute("UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? "
+                            "AND used_at IS NULL", (clock(), user_id, tf.hash_recovery_code(backup))).rowcount
+    return "backup" if used else None
+
+
+def _new_backup_codes(conn, user_id: str) -> list:
+    codes = tf.new_recovery_codes()
+    conn.execute("DELETE FROM recovery_codes WHERE user_id = ?", (user_id,))
+    conn.executemany("INSERT INTO recovery_codes (user_id, code_hash) VALUES (?, ?)",
+                     [(user_id, tf.hash_recovery_code(tf.normalise_recovery_code(c))) for c in codes])
+    return codes
+
+
+def two_factor_enabled(conn, user_id: str) -> bool:
+    return conn.execute("SELECT 1 FROM two_factor WHERE user_id = ? AND enabled_at IS NOT NULL",
+                        (user_id,)).fetchone() is not None
+
+
+def two_factor_status(conn, user_id: str) -> dict:
+    left = conn.execute("SELECT COUNT(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL",
+                        (user_id,)).fetchone()[0]
+    return {"enabled": two_factor_enabled(conn, user_id), "backup_codes_left": left}
+
+
+def begin_two_factor_setup(conn, token: str, password: str) -> dict:
+    """Step 1 of turning it on: returns the secret to add to an authenticator app."""
+    user_id = _logged_in_user(conn, token)
+    row = _check_password(conn, user_id, password)
+    if two_factor_enabled(conn, user_id):
+        raise ValueError("two-factor login is already on")
+    secret = tf.new_secret()
+    with conn:
+        conn.execute("INSERT INTO two_factor (user_id, secret, enabled_at, last_step, created_at) "
+                     "VALUES (?, ?, NULL, 0, ?) ON CONFLICT (user_id) DO UPDATE SET secret = excluded.secret, "
+                     "last_step = 0, created_at = excluded.created_at", (user_id, tf.seal(secret), clock()))
+    return {"secret": secret, "setup_link": tf.setup_link(secret, row["email"])}
+
+
+def confirm_two_factor_setup(conn, mailer: Mailer, base_url: str, token: str, code: str) -> dict:
+    """Step 2: a code from the app proves it's set up. Turns it on, returns the backup codes
+    (shown this once) and logs out every other device."""
+    user_id = _logged_in_user(conn, token)
+    row = conn.execute("SELECT secret FROM two_factor WHERE user_id = ? AND enabled_at IS NULL", (user_id,)).fetchone()
+    if row is None:
+        raise ValueError("start setting up two-factor login first" if not two_factor_enabled(conn, user_id)
+                         else "two-factor login is already on")
+    _limit(conn, "code_user", user_id, CODE_FAILS_PER_USER, "too many wrong codes, try again later")
+    step = tf.match_code(tf.unseal(row["secret"]), code, clock())
+    if step is None:
+        _record(conn, "code_user", user_id)
+        raise ValueError("that code didn't work. Check your phone sets its time automatically, then try the newest code")
+    with conn:
+        conn.execute("UPDATE two_factor SET enabled_at = ?, last_step = ? WHERE user_id = ?", (clock(), step, user_id))
+        codes = _new_backup_codes(conn, user_id)
+        conn.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, _hash_token(token)))
+    email = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()["email"]
+    _notify(mailer, base_url, email, "Two-factor login is on for your Mining Match account",
+            "Two-factor login was turned on. From now on, logging in needs your password and a code "
+            "from your authenticator app. Other devices were logged out.")
+    return {"recovery_codes": codes}
+
+
+def _second_factor_or_fail(conn, user_id: str, code: str) -> str:
+    _limit(conn, "code_user", user_id, CODE_FAILS_PER_USER, "too many wrong codes, try again later")
+    how = _use_second_factor(conn, user_id, code)
+    if how is None:
+        _record(conn, "code_user", user_id)
+        raise InvalidCredentials("that code didn't work, try the newest one from your app")
+    return how
+
+
+def disable_two_factor(conn, mailer: Mailer, base_url: str, token: str, password: str, code: str) -> None:
+    """Turn it off. Needs the password and a current code (or a backup code)."""
+    user_id = _logged_in_user(conn, token)
+    row = _check_password(conn, user_id, password)
+    if not two_factor_enabled(conn, user_id):
+        raise ValueError("two-factor login is already off")
+    _second_factor_or_fail(conn, user_id, code)
+    with conn:
+        conn.execute("DELETE FROM two_factor WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM recovery_codes WHERE user_id = ?", (user_id,))
+    _notify(mailer, base_url, row["email"], "Two-factor login is off for your Mining Match account",
+            "Two-factor login was turned off. Logging in now needs only your password.")
+
+
+def regenerate_backup_codes(conn, token: str, password: str, code: str) -> dict:
+    """New backup codes; the old ones stop working."""
+    user_id = _logged_in_user(conn, token)
+    _check_password(conn, user_id, password)
+    if not two_factor_enabled(conn, user_id):
+        raise ValueError("turn on two-factor login first")
+    _second_factor_or_fail(conn, user_id, code)
+    with conn:
+        codes = _new_backup_codes(conn, user_id)
+    return {"recovery_codes": codes}
+
+
+def notify_two_factor_reset(conn, mailer: Mailer, base_url: str, user_id: str) -> None:
+    """Tell the owner an admin turned their two-factor login off (e.g. after losing their phone)."""
+    email = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()["email"]
+    _notify(mailer, base_url, email, "Two-factor login was turned off by Mining Match support",
+            "A Mining Match administrator turned off two-factor login on your account, and every device "
+            "was logged out. Log in with your password and turn it back on from your Account page.")
 
 
 # ----------------------------------------------------------- password reset
@@ -431,6 +638,7 @@ def reset_password(conn, token: str, new_password: str) -> None:
             (hash_password(new_password), user_id),
         )
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM login_challenges WHERE user_id = ?", (user_id,))  # two-factor stays on
 
 
 def send_admin_invite(conn, mailer: Mailer, base_url: str, user_id: str) -> None:

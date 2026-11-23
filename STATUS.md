@@ -1,12 +1,12 @@
 # Mining Match: development status
 
-Last updated 20 November 2026. This file describes only what exists in this repository. "Built and tested" means the code is here and automated tests cover it. Nothing has been deployed to a live server yet, and no real candidate data has been used.
+Last updated 23 November 2026. This file describes only what exists in this repository. "Built and tested" means the code is here and automated tests cover it. Nothing has been deployed to a live server yet, and no real candidate data has been used.
 
 ## Summary
 
 The platform runs end to end on one computer: candidates and employers can register, build profiles and post jobs. Candidates are matched and scored automatically. Employers can shortlist candidates, unlock contact details through a two-step consent and fee-terms process, and get invoiced for placements. It has not been deployed, has not had an independent security test, and still uses SQLite rather than PostgreSQL.
 
-Test results at this commit: **165 Python tests** (including 2 full browser tests in Chrome) and **20 JavaScript tests**, all passing. Each feature area was also checked by deliberately inserting likely bugs and confirming the tests catch them.
+Test results at this commit: **181 Python tests** (including 2 full browser tests in Chrome) and **20 JavaScript tests**, all passing. Each feature area was also checked by deliberately inserting likely bugs and confirming the tests catch them.
 
 ## Your requested features
 
@@ -38,6 +38,8 @@ Test results at this commit: **165 Python tests** (including 2 full browser test
 
 **Web app.** Phone-first single-page app served by the API: every screen above, plus admin screens (placement terms, invoices, accounts, document checks, reminders, activity log, inviting admins).
 
+**Two-factor login.** Codes from any authenticator app, plus 10 one-time backup codes. Optional for candidates and employers, required for admins. Admins can reset it for someone who lost their phone (audited, and the person is emailed). Details in SECURITY.md.
+
 **Daily job.** `python -m daily` sends reminders, then issues invoices that are due.
 
 ## Not built yet
@@ -51,7 +53,6 @@ Test results at this commit: **165 Python tests** (including 2 full browser test
 | Live deployment | The deployment files in `deploy/` have **not been run on a real server**. |
 | Independent security test | Not done. Needed before real candidate data. |
 | Legal documents | Privacy policy, candidate terms and employer terms aren't written. The fee-terms text in the app is a placeholder; a lawyer must write it. |
-| Two-factor login | Not built. Recommended for admin accounts. |
 | Data export (privacy access requests) | No self-service export. Admins can see the data, but there is no download. |
 | Employer account deletion | Candidates can delete their accounts; employers and admins can't (admins can suspend). |
 | Partial payments, adjustment notes, recurring subscriptions | Not built; see the README's invoicing section. |
@@ -85,4 +86,5 @@ Test results at this commit: **165 Python tests** (including 2 full browser test
 - **Email links** (confirmation and reset) are single-use, time-limited and stored hashed. Tokens sit after `#` in links, so they never reach server logs.
 - **No account enumeration:** sign-up, reset and login reveal nothing about which emails are registered.
 - **Rate limits:** on logins, sign-ups and emails, stored in the database.
+- **Two-factor login:** authenticator-app codes (TOTP) with one-time backup codes; required for admins. The secret is encrypted with `MM_SECRET_KEY`.
 - **Roles:** candidate, employer and admin. The first admin is created from the server's command line, and later admins by invitation.

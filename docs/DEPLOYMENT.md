@@ -70,6 +70,8 @@ Point your domain's DNS (an A record) at the VPS's IP address before running cer
 
 - [ ] Connect virus scanning of uploads (see SECURITY.md). **Not yet built into the production app.**
 - [ ] `MM_SECURE_COOKIES` unset or `1`, `MM_DOCS=0`, `MM_BASE_URL` is the https address.
+- [ ] `MM_SECRET_KEY` set to a long random value and backed up; `MM_REQUIRE_ADMIN_2FA` unset or `1`.
+- [ ] The first admin has logged in and turned on two-factor login (the site asks straight away).
 - [ ] Email sends for real (sign up a test account).
 - [ ] Billing settings set and a test invoice checked by your accountant.
 - [ ] Placement terms, privacy policy and candidate terms written by a lawyer and published.

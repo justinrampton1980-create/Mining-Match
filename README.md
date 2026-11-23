@@ -19,7 +19,8 @@ mining-match/
   db/migrations/                   (upgrades for existing databases)
   python/data_layer.py             python/test_data_layer.py
   python/access_control.py         python/test_access_control.py
-  python/auth.py                   (sign-up, login, sessions, password reset)
+  python/auth.py                   (sign-up, login, sessions, password reset, two-factor login)
+  python/two_factor.py             python/test_two_factor.py (authenticator-app codes, backup codes)
   python/storage.py                (uploaded files, file-type checks)
   python/api.py                    python/test_api.py
   python/billing.py                python/test_billing.py   (placement fees, invoices)
@@ -202,6 +203,8 @@ Without `MM_SMTP_HOST`, emails are printed in the console instead of being sent.
 | `MM_SMTP_HOST`, `MM_SMTP_PORT`, `MM_SMTP_USER`, `MM_SMTP_PASSWORD`, `MM_MAIL_FROM` | email sending (STARTTLS) |
 | `MM_CORS_ORIGINS` | comma-separated website addresses allowed to call the API from a browser |
 | `MM_DOCS` | `0` hides `/docs` in production |
+| `MM_SECRET_KEY` | Encrypts two-factor login secrets in the database. Set a long random value in production and back it up; changing it breaks existing two-factor logins |
+| `MM_REQUIRE_ADMIN_2FA` | `1` (default): admins can't use admin pages until two-factor login is on. `0` only for local testing |
 | `MM_SECURE_COOKIES` | `1` (default) sends the website's login cookie over HTTPS only. `0` only for local testing over plain http |
 
 **Endpoints**
