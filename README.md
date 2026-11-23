@@ -174,7 +174,7 @@ ranked = ac.rank_candidates_for_job(conn, me, job_id, eligible_only=True)
 - **Unconfirmed emails.** Accounts that haven't confirmed their email can't log in and are left out of searches, so nobody can fill the platform with fake profiles or sign someone else up.
 - **First admin.** Create the first admin from a command line (see "Running the API"). This only works while no admin exists. After that, admins invite admins through the API.
 
-**Upgrading an existing database:** run the files in `db/migrations/` in order, once each (`001_access_control.sql`, `002_auth_and_fees.sql`, `003_billing.sql`, then `004_licence_reminders.sql`). New databases get everything from `schema.sql`. Migration 002 marks existing accounts as confirmed so nobody is locked out.
+**Upgrading an existing database:** run the files in `db/migrations/` in order, once each (`001_access_control.sql`, `002_auth_and_fees.sql`, `003_billing.sql`, `004_licence_reminders.sql`, then `006_monitoring.sql`; 005 comes with two-factor login). New databases get everything from `schema.sql`. Migration 002 marks existing accounts as confirmed so nobody is locked out.
 
 ## HTTP API
 
@@ -237,6 +237,8 @@ Clients send `Authorization: Bearer <token>` from `/auth/login`. Errors: 400 bad
 - Connect the virus-scan hook and a real email service, and set `MM_DOCS=0`.
 - Keep `MM_SECURE_COOKIES` at its default (`1`) and set `MM_BASE_URL` to the real https address.
 - Get an independent security test before real candidate data goes in.
+
+**Monitoring.** `create_app(alert_email=...)` (set from `MM_ALERT_EMAIL`) emails server errors and rate-limit refusals; `python -m monitoring` runs the 5-minute checks. See `python/monitoring.py`.
 
 ## Web app
 

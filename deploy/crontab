@@ -4,3 +4,5 @@ CRON_TZ=Australia/Brisbane
 50 6 * * *  set -a; . /etc/mining-match.env; cd /srv/mining-match/app/python && /srv/mining-match/venv/bin/python -m daily
 # 2:15am: backups
 15 2 * * *  /srv/mining-match/backup.sh >> /srv/mining-match/backup.log 2>&1
+# every 5 minutes: security monitoring (emails MM_ALERT_EMAIL; see python/monitoring.py)
+*/5 * * * *  set -a; . /etc/mining-match.env; cd /srv/mining-match/app/python && /srv/mining-match/venv/bin/python -m monitoring > /dev/null 2>> /srv/mining-match/monitoring.log
