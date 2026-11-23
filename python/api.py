@@ -13,6 +13,7 @@ Error codes: 400 bad input, 401 not logged in, 403 not allowed, 404 not found,
 409 conflict (e.g. fee terms changed), 413 file too large, 429 too many attempts.
 """
 
+import logging
 import os
 import sqlite3
 from pathlib import Path
@@ -28,9 +29,12 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 import access_control as ac
 import auth
 import billing
+import monitoring
 import data_layer as dl
 import reminders
 from storage import LocalStorage, sniff_type
+
+log = logging.getLogger("mining_match")
 
 # ------------------------------------------------------------------ models
 Short = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
@@ -267,7 +271,8 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
                scan_upload: Optional[Callable[[bytes], bool]] = None,
                cors_origins: tuple = (), enable_docs: bool = True,
                web_dir: Optional[Path] = WEB_DIR, secure_cookies: bool = True,
-               billing_config: Optional[billing.BillingConfig] = None) -> FastAPI:
+               billing_config: Optional[billing.BillingConfig] = None,
+               alert_email: Optional[str] = None) -> FastAPI:
     """Build the API.
 
     db_path      SQLite file (created and set up if needed)
@@ -276,6 +281,8 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     base_url     the website address used in emailed links, e.g. https://miningmatch.com.au
     scan_upload  optional virus check: return False to reject a file (e.g. ClamAV)
     web_dir      folder with the website (served at /); None to serve the API only
+    alert_email  where to email alerts about server errors and rate limits refusing people
+                 (monitoring.py); None for no emails
     secure_cookies  send the session cookie over HTTPS only (turn off only for local testing)
     billing_config  invoicing settings (business name, ABN, bank details); None turns invoicing off
     """
@@ -333,8 +340,27 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     app.add_exception_handler(auth.EmailNotVerified, lambda r, e: _error(403, str(e)))
     app.add_exception_handler(auth.AccountSuspended, lambda r, e: _error(403, str(e)))
     app.add_exception_handler(auth.InvalidToken, lambda r, e: _error(400, str(e)))
-    app.add_exception_handler(
-        auth.TooManyAttempts, lambda r, e: _error(429, str(e), {"Retry-After": str(e.retry_after)}))
+    alerts = monitoring.AppAlerts(db_path, mailer, alert_email)
+
+    def too_many(request: Request, e: auth.TooManyAttempts):
+        # A rate limit refusing someone can mean password guessing: tell the admins (at most hourly).
+        alerts.send(f"rate-limit:{request.url.path}", "a rate limit is refusing requests",
+                    f"{e} (on {request.method} {request.url.path}, from {request.client.host if request.client else '?'}).\n"
+                    "One person mistyping a password won't trigger this often; many of these mean someone is guessing.")
+        return _error(429, str(e), {"Retry-After": str(e.retry_after)})
+
+    app.add_exception_handler(auth.TooManyAttempts, too_many)
+
+    def server_error(request: Request, e: Exception):
+        route = request.scope.get("route")
+        where = f"{request.method} {getattr(route, 'path', request.url.path)}"
+        log.exception("server error on %s", where)
+        alerts.send(f"error:{type(e).__name__}:{where}", f"server error ({type(e).__name__})",
+                    f"A {type(e).__name__} happened on {where}. Someone saw \"something went wrong\".\n"
+                    "See the full error with: journalctl -u mining-match --since '1 hour ago'")
+        return _error(500, "something went wrong on our side; please try again")
+
+    app.add_exception_handler(Exception, server_error)
 
     # ---- dependencies
     def get_conn():
@@ -814,6 +840,7 @@ def app_from_environment() -> FastAPI:
         enable_docs=os.environ.get("MM_DOCS", "1") == "1",
         secure_cookies=os.environ.get("MM_SECURE_COOKIES", "1") == "1",
         billing_config=billing.BillingConfig.from_env(),
+        alert_email=os.environ.get("MM_ALERT_EMAIL", "").strip() or None,
     )
 
 

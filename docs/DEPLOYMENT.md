@@ -68,6 +68,33 @@ sudo crontab -u miningmatch /srv/mining-match/app/deploy/crontab
 
 Point your domain's DNS (an A record) at the VPS's IP address before running certbot.
 
+## Monitoring and alerts
+
+Set `MM_ALERT_EMAIL` in `/etc/mining-match.env` to the address that should hear about problems.
+Mining Match then emails it about:
+
+| What | How often |
+|---|---|
+| A server error (someone saw "something went wrong") | at most once an hour per kind of error |
+| A rate limit refusing people (password guessing, too many wrong codes, search scraping) | at most once an hour per kind |
+| The site not answering on `MM_BASE_URL/health` | checked every 5 minutes |
+| The HTTPS certificate expiring within 14 days | every 5 minutes |
+| Less than 10% or 2 GB free on the data disk | every 5 minutes |
+| No encrypted backup in the last 26 hours | every 5 minutes |
+| ClamAV not answering (uploads are refused meanwhile) | every 5 minutes |
+| One account refused 20+ times in 15 minutes (probing for others' data) | every 5 minutes |
+| 50+ failed logins across the site in 15 minutes | every 5 minutes |
+| Every new admin login, so a stolen admin login shows up | every 5 minutes |
+
+A failing check emails once, reminds every 6 hours while it lasts, and emails again when it's
+fixed. The 5-minute checks run from the cron file (`python -m monitoring`); run that command
+yourself to see every check's current result.
+
+**Also set up an outside uptime monitor.** The checks above run on the server, so they can't
+tell you when the whole server is down. Sign up to a free uptime-monitoring service (for example
+UptimeRobot or Better Stack), add `https://YOUR-DOMAIN/health` as a monitor every 5 minutes,
+and have it email or text your phone. This is the one alert that comes from outside.
+
 ## Backups
 
 `deploy/backup.sh` runs nightly at 2:15am. It streams the database and the uploads straight into
@@ -120,6 +147,7 @@ every few months after.
 - [ ] Connect virus scanning of uploads (see SECURITY.md). **Not yet built into the production app.**
 - [ ] `MM_SECURE_COOKIES` unset or `1`, `MM_DOCS=0`, `MM_BASE_URL` is the https address.
 - [ ] Email sends for real (sign up a test account).
+- [ ] `MM_ALERT_EMAIL` set; `python -m monitoring` shows every check ok; an outside uptime monitor watches `/health`.
 - [ ] Billing settings set and a test invoice checked by your accountant.
 - [ ] Placement terms, privacy policy and candidate terms written by a lawyer and published.
 - [ ] Backup key made and stored off the server; `backup.sh --check` says settings OK; a failure email arrives (e.g. run it once with a wrong key); backups are copied off the server; a restore has been tested.

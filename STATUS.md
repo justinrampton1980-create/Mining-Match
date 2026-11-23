@@ -38,6 +38,8 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 **Web app.** Phone-first single-page app served by the API: every screen above, plus admin screens (placement terms, invoices, accounts, document checks, reminders, activity log, inviting admins).
 
+**Security monitoring.** Server errors and rate-limit refusals are emailed to `MM_ALERT_EMAIL`. A 5-minute check (`python -m monitoring`) watches the site, HTTPS certificate, disk space, backups and ClamAV, flags bursts of refused actions and failed logins, and reports every new admin login. Alerts are sent once, repeated every 6 hours, and followed by an all-clear. An outside uptime monitor still has to be set up for the server being down.
+
 **Daily job.** `python -m daily` sends reminders, then issues invoices that are due.
 
 ## Not built yet

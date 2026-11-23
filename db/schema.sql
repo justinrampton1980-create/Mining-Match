@@ -223,6 +223,13 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   used_at    INTEGER
 );
 
+-- Security monitoring (python/monitoring.py): what each check last found, so an alert is sent
+-- when something breaks, repeated every few hours, and once more when it's fixed.
+CREATE TABLE IF NOT EXISTS monitor_state (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL                              -- JSON
+);
+
 -- Counts recent attempts (failed logins, reset requests, sign-ups) for rate limiting.
 CREATE TABLE IF NOT EXISTS rate_events (
   bucket TEXT NOT NULL,

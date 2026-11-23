@@ -14,6 +14,11 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Employer candidate searches and job rankings are limited to 100 an hour and 500 a day per employer, so nobody can sweep the whole candidate pool.
 - Rate limits on failed logins: 5 for one account from one IP address, or 30 from one IP address, in 15 minutes; and 100 for one account in an hour from all addresses together. Someone else guessing at an account can't lock its owner out. Emails sent are limited too.
 
+**Monitoring**
+- Server errors and rate limits refusing people are emailed to `MM_ALERT_EMAIL` (at most hourly per kind); visitors only ever see "something went wrong", never internal details.
+- Every 5 minutes `python -m monitoring` checks the site, HTTPS certificate, disk, last night's backup and ClamAV, and looks for bursts of refused actions by one account and of failed logins site-wide. Every new admin login is reported.
+- An outside uptime monitor is needed for the server being down altogether (DEPLOYMENT.md).
+
 **The website**
 - **Login cookie:** HttpOnly (page scripts can't read it), Secure (HTTPS only) and SameSite=Strict. The server accepts it only with the header `X-Requested-With: mining-match`, which another site can't add, so the cookie can't be used for cross-site request forgery.
 - **Content Security Policy:** scripts load only from the site itself, with no inline scripts, so injected script can't run. The API also sends `X-Content-Type-Options`, `Referrer-Policy` and frame-blocking headers, and over HTTPS a `Strict-Transport-Security` header so browsers never fall back to plain http.
