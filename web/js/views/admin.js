@@ -160,7 +160,7 @@ async function usersTab(ctx) {
           confirmButton('Reset two-factor', 'Tap again: they’ll set it up again at next login', async () => {
             await post(`/admin/users/${u.user_id}/reset-two-factor`);
             toast('Two-factor login reset. They’ve been logged out.');
-          }, { class: 'btn small', 'aria-label': `Reset two-factor login for ${u.email}` })) : null,
+          }, { class: 'btn small' })) : null,
         u.user_id === ctx.me.user_id ? h('p', { class: 'small muted' }, 'This is you.') : u.is_active
           ? h('div', { class: 'actions' }, h('div', { class: 'grow' }, reason),
             confirmButton('Suspend', 'Tap again to suspend', async () => {
