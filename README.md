@@ -238,6 +238,8 @@ Clients send `Authorization: Bearer <token>` from `/auth/login`. Errors: 400 bad
 - Keep `MM_SECURE_COOKIES` at its default (`1`) and set `MM_BASE_URL` to the real https address.
 - Get an independent security test before real candidate data goes in.
 
+**Employer closure.** `POST /employers/{employer_id}/close` with `{"password": ...}` (the employer) or `{"reason": ...}` (an admin). Refused with 409 while an invoice is unpaid or scheduled. See `access_control.close_employer` for what's removed and what's kept.
+
 ## Web app
 
 `web/` is the website, served by the API itself at `/`: one server to run, nothing to compile or install. It's built for phones first (navigation at the bottom, in reach of a thumb) and switches to a top bar on wider screens.

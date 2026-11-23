@@ -373,6 +373,15 @@ class HiringFlowInBrowser(unittest.TestCase):
         emp.get_by_role("link", name="Jobs").click()
         expect(emp.get_by_role("heading", name="Log in")).to_be_visible()  # logged out straight away
 
+        # The employer asked (by email) to close their account; the invoice is paid, so it can be
+        account = admin.locator(".row", has_text="Alpha Mining")
+        account.get_by_role("button", name="Close account").click()
+        account.get_by_role("button", name="Tap again: jobs close, sign-in is deleted").click()
+        self.toast(admin, "Account closed. Invoices and hires are kept.")
+        expect(admin.locator(".row", has_text="Alpha Mining")).to_contain_text("Closed")
+        expect(admin.locator(".row", has_text="hr@alpha.example")).to_have_count(0)
+        self.shot(admin, "desktop-7-admin-employer-closed")
+
         # Candidate logs out from the account page
         cand.get_by_role("link", name="Account").click()
         cand.get_by_role("button", name="Log out").click()

@@ -70,6 +70,11 @@ class LoginIn(In):
     use_cookie: bool = False  # the website: session kept in an HttpOnly cookie, token not returned
 
 
+class CloseAccountIn(In):
+    password: Optional[str] = Field(default=None, max_length=200)  # employers closing their own account
+    reason: Optional[Annotated[str, StringConstraints(max_length=200)]] = None  # admins; no personal details
+
+
 class TokenIn(In):
     token: Token
 
@@ -571,6 +576,17 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     @app.get("/contact-requests", tags=["contact"])
     def contact_requests(me: Me, conn: Conn):
         return ac.list_contact_requests(conn, me)
+
+    @app.post("/employers/{employer_id}/close", tags=["employers"])
+    def close_employer(employer_id: Id, body: CloseAccountIn, me: Me, conn: Conn,
+                       token: Annotated[Optional[str], Depends(bearer)]):
+        """Close an employer account (the employer, with their password, or an admin)."""
+        result = ac.close_employer(conn, me, employer_id, password=body.password, reason=body.reason)
+        if me.role != "employer":
+            return result
+        response = JSONResponse(result)  # they're logged out: clear the website's cookie too
+        response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, secure=secure_cookies, samesite="strict")
+        return response
 
     @app.put("/contact-releases/{employer_id}", tags=["contact"])
     def set_release(employer_id: Id, body: ReleaseIn, me: Me, conn: Conn):
