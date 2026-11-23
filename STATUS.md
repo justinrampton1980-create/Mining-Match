@@ -38,6 +38,8 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 **Web app.** Phone-first single-page app served by the API: every screen above, plus admin screens (placement terms, invoices, accounts, document checks, reminders, activity log, inviting admins).
 
+**Virus scanning.** Every upload is streamed to ClamAV before it's saved. Infected files are refused; if ClamAV is down or unsure, uploads are refused rather than saved unscanned. The live app can't run with scanning off.
+
 **Daily job.** `python -m daily` sends reminders, then issues invoices that are due.
 
 ## Not built yet
@@ -46,7 +48,6 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 |---|---|
 | PostgreSQL | Only SQLite works. Fine for a pilot on one server; move before scaling. |
 | Licence register checks | Admins can mark an uploaded document as checked by hand. Nothing checks government registers automatically. |
-| Virus scanning of uploads | A hook exists (`scan_upload` in `create_app`), but the production app doesn't connect a scanner. **Must be connected before real uploads.** |
 | Uploads in cloud storage | Files are saved on the server's disk (`MM_FILES`). |
 | Live deployment | The deployment files in `deploy/` have **not been run on a real server**. |
 | Independent security test | Not done. Needed before real candidate data. |
@@ -60,7 +61,7 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 ## Known limitations to fix before going live
 
-1. **Virus scanning** isn't connected (see above).
+1. **Virus scanning** is built but has only been tested against a stand-in ClamAV daemon. Run `virus_scan.py --check` on the server before taking uploads.
 2. **Real client IP behind a proxy:** rate limits use the connecting address. Behind nginx, uvicorn must be started with `--proxy-headers --forwarded-allow-ips=127.0.0.1` (as in `deploy/mining-match.service`), or every user will share one address and hit the limits together.
 3. **One server only:** SQLite and local uploads mean the app can't yet run across several servers.
 4. **Licence renewal cycles** in `db/catalog_seed.json` are general guidance and need checking against the regulators.

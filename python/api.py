@@ -13,6 +13,7 @@ Error codes: 400 bad input, 401 not logged in, 403 not allowed, 404 not found,
 409 conflict (e.g. fee terms changed), 413 file too large, 429 too many attempts.
 """
 
+import logging
 import os
 import sqlite3
 from pathlib import Path
@@ -31,6 +32,9 @@ import billing
 import data_layer as dl
 import reminders
 from storage import LocalStorage, sniff_type
+from virus_scan import ClamdScanner, ScanUnavailable
+
+log = logging.getLogger("mining_match")
 
 # ------------------------------------------------------------------ models
 Short = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
@@ -274,7 +278,9 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     storage      object with save/read/delete (e.g. storage.LocalStorage)
     mailer       object with send(to, subject, body) (auth.SMTPMailer in production)
     base_url     the website address used in emailed links, e.g. https://miningmatch.com.au
-    scan_upload  optional virus check: return False to reject a file (e.g. ClamAV)
+    scan_upload  virus check: return False to reject a file; raise ScanUnavailable when the file
+                 can't be checked (the upload is then refused, never saved unscanned).
+                 app_from_environment() always passes ClamAV (virus_scan.ClamdScanner).
     web_dir      folder with the website (served at /); None to serve the API only
     secure_cookies  send the session cookie over HTTPS only (turn off only for local testing)
     billing_config  invoicing settings (business name, ABN, bank details); None turns invoicing off
@@ -528,8 +534,16 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         mime = sniff_type(data)  # what the file really is, not what the browser says
         if mime is None or mime not in ac.ALLOWED_MIME_TYPES:
             raise ValueError("only PDF, Word, JPEG and PNG files are accepted")
-        if scan_upload is not None and not scan_upload(data):
-            raise ValueError("this file was rejected by the virus scan")
+        if scan_upload is not None:
+            try:
+                clean = scan_upload(data)
+            except ScanUnavailable as e:
+                log.error("upload refused, virus scanning unavailable: %s", e)
+                ac.record_upload_rejected(conn, me, candidate_id, "virus scan unavailable")
+                return _error(503, "uploads are paused because virus scanning is unavailable; please try again later")
+            if not clean:
+                ac.record_upload_rejected(conn, me, candidate_id, "virus scan: infected")
+                raise ValueError("this file was rejected by the virus scan")
         doc = ac.add_document(conn, me, candidate_id, kind, file.filename or "upload",
                               mime_type=mime, size_bytes=len(data))
         try:
@@ -801,6 +815,22 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     return app
 
 
+def scanner_from_environment() -> Optional[ClamdScanner]:
+    """ClamAV is on unless MM_VIRUS_SCAN=0, which only a local development setup may use."""
+    if os.environ.get("MM_VIRUS_SCAN", "1") == "0":
+        if os.environ.get("MM_SECURE_COOKIES", "1") != "0":
+            raise RuntimeError("MM_VIRUS_SCAN=0 is only allowed for local development (with MM_SECURE_COOKIES=0); "
+                               "a live site must scan uploads")
+        log.warning("virus scanning of uploads is OFF (MM_VIRUS_SCAN=0): local development only")
+        return None
+    scanner = ClamdScanner.from_env()
+    try:
+        scanner.ping()
+    except ScanUnavailable as e:  # start anyway; uploads are refused until clamd answers
+        log.error("virus scanner not reachable at start-up, uploads will be refused until it is: %s", e)
+    return scanner
+
+
 def app_from_environment() -> FastAPI:
     """Configuration from environment variables (see README)."""
     mailer = auth.mailer_from_env()
@@ -814,6 +844,7 @@ def app_from_environment() -> FastAPI:
         enable_docs=os.environ.get("MM_DOCS", "1") == "1",
         secure_cookies=os.environ.get("MM_SECURE_COOKIES", "1") == "1",
         billing_config=billing.BillingConfig.from_env(),
+        scan_upload=scanner_from_environment(),
     )
 
 

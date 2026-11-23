@@ -228,13 +228,13 @@ Clients send `Authorization: Bearer <token>` from `/auth/login`. Errors: 400 bad
 - Failed logins: 5 for one account from one IP address, or 30 from one IP address, in 15 minutes, then a wait; also 100 for one account in an hour across all addresses. Someone else's wrong guesses don't lock the owner out. Emails sent are limited per address too.
 - Validation errors never repeat what was submitted, so passwords can't leak into logs or screens.
 
-**Uploads.** The file type comes from the file's content, not its name or what the browser claims. Only PDF, Word (.doc/.docx), JPEG and PNG up to 10 MB are accepted. A virus-scan hook (`scan_upload`) runs before anything is stored; connect it to ClamAV or a cloud scanner in production. Files are always downloaded as attachments, never shown inside the browser.
+**Uploads.** The file type comes from the file's content, not its name or what the browser claims. Only PDF, Word (.doc/.docx), JPEG and PNG up to 10 MB are accepted. Every upload is scanned by ClamAV before anything is stored (`python/virus_scan.py`). Scanning fails closed: if the scanner is down or unsure, the upload is refused, never saved unscanned. Files are always downloaded as attachments, never shown inside the browser.
 
 **Before going live**
 
 - Run behind HTTPS (e.g. a load balancer or nginx). Cap request size there too (`client_max_body_size 11m`), and pass the real client IP. Then change `ip()` in `api.py` to read the proxy's forwarded header, or rate limits will count every user as one address.
 - Move to PostgreSQL, and put uploads in Australian-region object storage (same four methods as `LocalStorage`).
-- Connect the virus-scan hook and a real email service, and set `MM_DOCS=0`.
+- Run ClamAV (`virus_scan.py --check` must pass), connect a real email service, and set `MM_DOCS=0`.
 - Keep `MM_SECURE_COOKIES` at its default (`1`) and set `MM_BASE_URL` to the real https address.
 - Get an independent security test before real candidate data goes in.
 
