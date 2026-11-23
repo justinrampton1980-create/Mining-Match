@@ -255,6 +255,7 @@ class UserActiveIn(In):
 # --------------------------------------------------------------- the app
 NO_CSP_PATHS = ("/docs", "/redoc", "/openapi.json")
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+HSTS = "max-age=31536000"  # browsers use HTTPS only for this site for a year
 SESSION_COOKIE = "mm_session"
 CSRF_HEADER, CSRF_VALUE = "x-requested-with", "mining-match"
 # The website may load only its own files; no inline scripts, no other sites.
@@ -300,6 +301,8 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
+        if request.url.scheme == "https":  # behind nginx, uvicorn's --proxy-headers sets this
+            response.headers["Strict-Transport-Security"] = HSTS
         path = request.url.path
         if path == "/" or path.startswith("/assets/"):
             response.headers["Content-Security-Policy"] = WEB_CSP
@@ -377,6 +380,10 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         return request.client.host if request.client else "unknown"
 
     IP = Annotated[str, Depends(ip)]
+
+    def limit_searches(me: ac.Principal, conn) -> None:
+        if me.role == "employer" and me.employer_id:  # admins aren't limited
+            auth.limit_employer_search(conn, me.employer_id)
     CHECK_EMAIL = {"detail": "Check your email for the next step."}
 
     # ================================================================ auth
@@ -639,11 +646,13 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     def ranked_candidates(job_id: Id, me: Me, conn: Conn,
                           min_score: Annotated[float, Query(ge=0, le=100)] = 0, eligible_only: bool = False,
                           limit: Annotated[Optional[int], Query(ge=1, le=1000)] = None):
+        limit_searches(me, conn)
         return ac.rank_candidates_for_job(conn, me, job_id, min_score=min_score,
                                           eligible_only=eligible_only, limit=limit)
 
     @app.post("/search/candidates", tags=["jobs"])
     def search(body: SearchIn, me: Me, conn: Conn):
+        limit_searches(me, conn)
         options: dict[str, Any] = {"min_score": body.min_score, "eligible_only": body.eligible_only,
                                    "limit": body.limit}
         if body.weights is not None:

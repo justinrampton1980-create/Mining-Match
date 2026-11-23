@@ -12,7 +12,10 @@ Security choices
     regardless. Resetting a password or suspending an account ends all sessions.
   * Sign-up and password reset always answer the same way whether or not the email is
     registered, so nobody can use them to find out who has an account.
-  * Failed logins are limited per email and per IP address.
+  * Failed logins are limited per account from each IP address, per IP address, and (much
+    more loosely) per account overall. A stranger's wrong guesses therefore can't lock the
+    real owner out from their own device; the overall limit only stops a large spread-out
+    attack on one account.
   * Emailed links put the token after "#", which browsers never send to any server or
     include in the Referer header, so it can't leak into logs.
 """
@@ -43,11 +46,16 @@ RESET_TOKEN_SECONDS = 3600
 INVITE_TOKEN_SECONDS = 48 * 3600
 
 # (limit, window in seconds)
-LOGIN_FAILS_PER_EMAIL = (5, 15 * 60)
-LOGIN_FAILS_PER_IP = (30, 15 * 60)
+LOGIN_FAILS_PER_EMAIL_AND_IP = (5, 15 * 60)  # one account guessed at from one address
+LOGIN_FAILS_PER_IP = (30, 15 * 60)  # one address guessing at many accounts
+LOGIN_FAILS_PER_EMAIL = (100, 60 * 60)  # one account guessed at from many addresses
 RESET_REQUESTS_PER_EMAIL = (3, 3600)
 EMAILS_PER_IP = (20, 3600)  # sign-ups, resends and reset requests from one address
 RESENDS_PER_EMAIL = (3, 3600)
+# Employer candidate searches and rankings: generous for real recruiting, but stops one
+# employer sweeping the whole candidate pool with thousands of varied searches.
+EMPLOYER_SEARCHES_PER_HOUR = (100, 3600)
+EMPLOYER_SEARCHES_PER_DAY = (500, 24 * 3600)
 
 COMMON_PASSWORDS = frozenset({
     "password123", "password1234", "qwertyuiop", "1234567890", "123456789a", "iloveyou12",
@@ -214,6 +222,14 @@ def _limit(conn, bucket: str, key: str, rule: tuple, message: str) -> None:
         raise TooManyAttempts(message, retry_after=max(1, oldest + window - clock()))
 
 
+def limit_employer_search(conn, employer_id: str) -> None:
+    """Count one candidate search or ranking by an employer; raise TooManyAttempts over the limit."""
+    message = "too many candidate searches, try again later"
+    _limit(conn, "employer_search", employer_id, EMPLOYER_SEARCHES_PER_HOUR, message)
+    _limit(conn, "employer_search", employer_id, EMPLOYER_SEARCHES_PER_DAY, message)
+    _record(conn, "employer_search", employer_id)
+
+
 # ------------------------------------------------------------------- tokens
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -288,10 +304,12 @@ def register(conn, mailer: Mailer, base_url: str, *, role: str, email: str, pass
     _limit(conn, "email_ip", ip, EMAILS_PER_IP, "too many requests from this address, try again later")
     _record(conn, "email_ip", ip)
 
+    # Hash before checking, so a taken email takes as long to answer as a new one (otherwise
+    # the response time would show who has an account).
+    password_hash = hash_password(password)
     if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
         _send_already_registered(mailer, base_url, email)
         return
-    password_hash = hash_password(password)
     try:
         if role == "candidate":
             candidate_id = dl.register_candidate(conn, email, password_hash=password_hash, **profile)
@@ -333,6 +351,8 @@ def login(conn, email: str, password: str, ip: str) -> dict:
     except ValueError:
         raise InvalidCredentials("wrong email or password") from None
     _limit(conn, "login_ip", ip, LOGIN_FAILS_PER_IP, "too many failed logins from this address, try again later")
+    _limit(conn, "login_email_ip", f"{email} {ip}", LOGIN_FAILS_PER_EMAIL_AND_IP,
+           "too many failed logins for this account, try again later")
     _limit(conn, "login_email", email, LOGIN_FAILS_PER_EMAIL, "too many failed logins for this account, try again later")
     row = conn.execute(
         "SELECT id, role, password_hash, is_active, email_verified_at FROM users WHERE email = ?", (email,)
@@ -344,6 +364,7 @@ def login(conn, email: str, password: str, ip: str) -> dict:
         ok = verify_password(str(password), row["password_hash"])
     if not ok:
         _record(conn, "login_ip", ip)
+        _record(conn, "login_email_ip", f"{email} {ip}")
         _record(conn, "login_email", email)
         raise InvalidCredentials("wrong email or password")
     # Only someone with the right password learns about the account's state.

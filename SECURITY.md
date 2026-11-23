@@ -10,12 +10,13 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Passwords are hashed with scrypt and a random salt. They must be at least 10 characters, not a common password, and not contain the email.
 - Session tokens, email-confirmation tokens and reset tokens are random and stored only as SHA-256 hashes. A database leak doesn't reveal working sessions.
 - Sessions expire after 7 days unused or 30 days in total. Password reset ends every session; password change ends the others; suspension ends all of them straight away.
-- Login, sign-up and reset never reveal whether an email is registered.
-- Rate limits: 5 failed logins per email or 30 per IP address in 15 minutes, plus limits on emails sent.
+- Login, sign-up and reset never reveal whether an email is registered, by their answer or by how long they take.
+- Employer candidate searches and job rankings are limited to 100 an hour and 500 a day per employer, so nobody can sweep the whole candidate pool.
+- Rate limits on failed logins: 5 for one account from one IP address, or 30 from one IP address, in 15 minutes; and 100 for one account in an hour from all addresses together. Someone else guessing at an account can't lock its owner out. Emails sent are limited too.
 
 **The website**
 - **Login cookie:** HttpOnly (page scripts can't read it), Secure (HTTPS only) and SameSite=Strict. The server accepts it only with the header `X-Requested-With: mining-match`, which another site can't add, so the cookie can't be used for cross-site request forgery.
-- **Content Security Policy:** scripts load only from the site itself, with no inline scripts, so injected script can't run. The API also sends `X-Content-Type-Options`, `Referrer-Policy` and frame-blocking headers.
+- **Content Security Policy:** scripts load only from the site itself, with no inline scripts, so injected script can't run. The API also sends `X-Content-Type-Options`, `Referrer-Policy` and frame-blocking headers, and over HTTPS a `Strict-Transport-Security` header so browsers never fall back to plain http.
 - **No HTML injection:** all text people type is inserted as text, never parsed as HTML. A browser test tries an injection and checks it doesn't run.
 - **Tokens stay out of logs:** emailed links carry tokens after `#`, so they never reach the server or its logs, and the app removes them from the address bar after use.
 
@@ -30,6 +31,10 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Filenames are cleaned, and storage paths can't escape the upload folder.
 - Files are always sent as downloads, never displayed inside the site.
 
+**Backups**
+- Nightly backups are streamed straight into encryption to a public key whose private key is kept off the server, so no unencrypted copy is ever written to disk and a break-in at the server or the backup storage doesn't expose them.
+- There is no unencrypted fallback: a missing or wrong key (including the private key pasted by mistake), a missing tool, a database that fails its integrity check or any failed step means nothing is written and an alert email is sent. Unencrypted backups from older versions are removed.
+
 **Money**
 - Bank details come only from server settings, never from the website, so nobody who breaks into an account can redirect payments.
 - Issued invoices and published fee terms can't be changed: database triggers refuse it.
@@ -43,7 +48,7 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 |---|---|
 | Uploads aren't virus-scanned in production | Connect ClamAV (installed by the deployment steps) through the `scan_upload` hook in `api.app_from_environment()`. |
 | No two-factor login | Add it, at least for admins. |
-| Single-server SQLite | Move to PostgreSQL; encrypt backups and copy them off the server. |
+| Single-server SQLite | Move to PostgreSQL; copy the (encrypted) backups off the server. |
 | Deployment files not run on a real server | Test them on the VPS; run `nginx -t`. |
 | No independent security test | Commission one before launch. |
 | Admin accounts can see everything | Keep the number of admins small and review the activity log. |

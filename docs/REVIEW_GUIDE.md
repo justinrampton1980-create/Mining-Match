@@ -15,12 +15,12 @@ For anyone reviewing this code, including the ChatGPT agent working on Mining Ma
 | Billing | `python/billing.py` | GST rounding, fee window, issue dates, invoice numbering, ABN check, bank details from settings only. |
 | Reminders | `python/reminders.py`, `python/daily.py` | Once-per-stage logic, opt-out token. |
 | Web app | `web/js/` | `dom.js` builds every element with text nodes only; routes in `app.js`. |
-| Deployment | `deploy/`, `docs/DEPLOYMENT.md` | systemd hardening, nginx proxy headers, backups. **Untested on a real server.** |
+| Deployment | `deploy/`, `docs/DEPLOYMENT.md` | systemd hardening, nginx proxy headers, encrypted backups (`deploy/backup.sh`, tested by `python/test_backup.py`). **Untested on a real server.** |
 
 ## Running the checks
 
 ```bash
-cd python && pip install -r requirements.txt && python -m unittest    # 165 tests
+cd python && pip install -r requirements.txt && python -m unittest    # 190 tests
 cd ../js && node --test                                                # 20 tests
 ```
 

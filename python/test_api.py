@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import tempfile
+import time
 import unittest
 import zipfile
 from datetime import date, timedelta
@@ -219,7 +220,7 @@ class SignUpAndLogin(ApiTest):
                                  json={"email": "jordan@example.com", "password": pw, "name": "J"})
             self.assertEqual(r.status_code, 400, pw)
 
-    def test_failed_logins_lock_the_account_for_a_while(self):
+    def test_failed_logins_from_one_address_make_that_address_wait(self):
         self.candidate()
         now = [2_000_000_000]
         with mock.patch.object(auth, "clock", lambda: now[0]):
@@ -227,10 +228,51 @@ class SignUpAndLogin(ApiTest):
                 r = self.client.post("/auth/login", json={"email": "jordan@example.com", "password": "wrong-pass-123"})
                 self.assertEqual(r.status_code, 401)
             r = self.client.post("/auth/login", json={"email": "jordan@example.com", "password": PASSWORD})
-            self.assertEqual(r.status_code, 429)  # even the right password waits
+            self.assertEqual(r.status_code, 429)  # even the right password waits, from this address
             self.assertGreater(int(r.headers["retry-after"]), 0)
             now[0] += 16 * 60
             self.login("jordan@example.com")
+
+    def test_someone_elses_wrong_guesses_dont_lock_the_owner_out(self):
+        self.candidate()
+        attacker = TestClient(self.app, client=("203.0.113.9", 40000))
+        owner = TestClient(self.app, client=("198.51.100.7", 40000))
+        for _ in range(10):
+            attacker.post("/auth/login", json={"email": "jordan@example.com", "password": "wrong-pass-123"})
+        r = attacker.post("/auth/login", json={"email": "jordan@example.com", "password": "wrong-pass-123"})
+        self.assertEqual(r.status_code, 429)  # the guesser is slowed down
+        r = owner.post("/auth/login", json={"email": "jordan@example.com", "password": PASSWORD})
+        self.assertEqual(r.status_code, 200, r.text)  # the owner, elsewhere, still gets in
+        attacker.close()
+        owner.close()
+
+    def test_guessing_one_account_from_many_addresses_is_still_limited(self):
+        self.candidate()
+        limit, _ = auth.LOGIN_FAILS_PER_EMAIL
+        now = [2_000_000_000]
+        with mock.patch.object(auth, "clock", lambda: now[0]):
+            conn = dl.connect(self.db)
+            try:
+                for i in range(limit):
+                    with self.assertRaises(auth.InvalidCredentials):
+                        auth.login(conn, "jordan@example.com", "wrong-pass-123", f"10.0.{i // 250}.{i % 250}")
+                with self.assertRaises(auth.TooManyAttempts):
+                    auth.login(conn, "jordan@example.com", PASSWORD, "192.0.2.50")
+                now[0] += 61 * 60
+                self.assertEqual(auth.login(conn, "jordan@example.com", PASSWORD, "192.0.2.50")["role"], "candidate")
+            finally:
+                conn.close()
+
+    def test_signup_takes_the_same_work_whether_or_not_the_email_is_taken(self):
+        self.candidate()
+        body = {"password": PASSWORD, "name": "Someone"}
+        with mock.patch.object(auth, "hash_password", wraps=auth.hash_password) as hashed:
+            self.client.post("/auth/register/candidate", json={"email": "jordan@example.com", **body})
+            taken = hashed.call_count
+            hashed.reset_mock()
+            self.client.post("/auth/register/candidate", json={"email": "fresh@example.com", **body})
+            new = hashed.call_count
+        self.assertEqual((taken, new), (1, 1))  # the slow password hash runs either way
 
     def test_sessions_end_on_logout_idle_and_password_reset(self):
         self.candidate()
@@ -552,6 +594,65 @@ class ExpiryReminders(ApiTest):
         self.assertIsNone(rules["White Card"]["renew_years"])
         self.assertIn("Doesn’t expire".replace("’", "'"), rules["White Card"]["note"])
         self.assertEqual(self.client.get("/catalog/licence-rules").status_code, 401)
+
+
+class SearchLimits(ApiTest):
+    def test_employer_searches_are_limited_per_hour_and_per_day(self):
+        self.candidate()
+        self.employer()
+        hourly, _ = auth.EMPLOYER_SEARCHES_PER_HOUR
+        daily, _ = auth.EMPLOYER_SEARCHES_PER_DAY
+        now = [int(time.time())]
+        with mock.patch.object(auth, "clock", lambda: now[0]):
+            eh = self.login("hr@alpha.example")
+            search = lambda: self.client.post("/search/candidates", json={"criteria": {}}, headers=eh)
+            for _ in range(hourly):
+                self.assertEqual(search().status_code, 200)
+            r = search()
+            self.assertEqual(r.status_code, 429)
+            self.assertGreater(int(r.headers["retry-after"]), 0)
+            done = hourly
+            while done < daily:  # spread over the day, the daily cap still applies
+                now[0] += 3601
+                for _ in range(min(hourly, daily - done)):
+                    self.assertEqual(search().status_code, 200)
+                done += min(hourly, daily - done)
+            now[0] += 3601
+            self.assertEqual(search().status_code, 429)
+            now[0] += 24 * 3600
+            self.assertEqual(search().status_code, 200)
+
+    def test_job_rankings_count_too_and_other_employers_are_unaffected(self):
+        self.candidate()
+        eh, _ = self.employer()
+        other, _ = self.employer("hr@beta.example", "Beta Mining")
+        r = self.client.post("/jobs", headers=eh, json={**JOB, "status": "open"})
+        self.assertEqual(r.status_code, 201, r.text)
+        job_id = r.json()["id"]
+        hourly, _ = auth.EMPLOYER_SEARCHES_PER_HOUR
+        with mock.patch.object(auth, "EMPLOYER_SEARCHES_PER_HOUR", (3, 3600)):
+            for _ in range(3):
+                self.assertEqual(self.client.get(f"/jobs/{job_id}/ranked-candidates", headers=eh).status_code, 200)
+            self.assertEqual(self.client.post("/search/candidates", json={"criteria": {}}, headers=eh).status_code, 429)
+            self.assertEqual(self.client.post("/search/candidates", json={"criteria": {}}, headers=other).status_code, 200)
+            for _ in range(5):  # admins aren't limited
+                self.assertEqual(self.client.post("/search/candidates", json={"criteria": {}},
+                                                  headers=self.admin).status_code, 200)
+
+
+class HttpsOnly(ApiTest):
+    def test_https_responses_tell_browsers_to_stay_on_https(self):
+        secure = TestClient(self.app, base_url="https://testserver")
+        try:
+            for path in ("/", "/health"):
+                r = secure.get(path)
+                self.assertEqual(r.headers.get("strict-transport-security"), "max-age=31536000", path)
+        finally:
+            secure.close()
+
+    def test_plain_http_responses_dont_send_it(self):
+        # Browsers ignore it over http anyway; local development stays on http.
+        self.assertNotIn("strict-transport-security", self.client.get("/health").headers)
 
 
 class PasswordHashing(unittest.TestCase):
