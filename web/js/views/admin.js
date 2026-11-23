@@ -156,6 +156,8 @@ async function usersTab(ctx) {
             u.is_active ? null : h('span', { class: 'badge bad' }, 'Suspended'),
             u.email_verified ? null : h('span', { class: 'badge warn' }, 'Email not confirmed'))),
         h('p', { class: 'meta' }, h('span', {}, u.email), h('span', {}, `Joined ${fmtDate(u.created_at)}`)),
+        h('div', { class: 'actions' }, actionButton('Export data', () => download(`/admin/users/${u.user_id}/export`,
+          `mining-match-user-data-${u.user_id.slice(0, 8)}.zip`), { class: 'btn small', 'aria-label': `Export all data held about ${u.email}` })),
         u.user_id === ctx.me.user_id ? h('p', { class: 'small muted' }, 'This is you.') : u.is_active
           ? h('div', { class: 'actions' }, h('div', { class: 'grow' }, reason),
             confirmButton('Suspend', 'Tap again to suspend', async () => {

@@ -4,6 +4,7 @@ Needs Playwright (pip install playwright) and Chrome. Skipped if either is missi
 Run: python -m unittest test_web -v
 Set MM_SHOTS=/some/folder to save phone and desktop screenshots there.
 """
+import json
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
@@ -367,14 +369,27 @@ class HiringFlowInBrowser(unittest.TestCase):
         admin.get_by_label("Find").fill("alpha")
         admin.get_by_role("button", name="Search").click()
         account = admin.locator(".row", has_text="hr@alpha.example")
+        with admin.expect_download() as exported:  # an access request handled by an admin
+            account.get_by_role("button", name="Export all data held about hr@alpha.example").click()
+        with zipfile.ZipFile(exported.value.path()) as z:
+            self.assertEqual(json.loads(z.read("data.json"))["employer"]["company_name"], "Alpha Mining")
         account.get_by_role("button", name="Suspend").click()
         account.get_by_role("button", name="Tap again to suspend").click()
         self.toast(admin, "Account suspended")
         emp.get_by_role("link", name="Jobs").click()
         expect(emp.get_by_role("heading", name="Log in")).to_be_visible()  # logged out straight away
 
-        # Candidate logs out from the account page
+        # Candidate downloads their data, then logs out, from the account page
         cand.get_by_role("link", name="Account").click()
+        with cand.expect_download() as mine:
+            cand.get_by_role("button", name="Download my data").click()
+        self.assertEqual(mine.value.suggested_filename, "mining-match-my-data.zip")
+        with zipfile.ZipFile(mine.value.path()) as z:
+            data = json.loads(z.read("data.json"))
+            self.assertEqual(data["candidate"]["name"], "Jordan Private")
+            self.assertEqual(z.read(data["candidate"]["documents"][0]["file_in_this_export"]), PDF)
+        self.toast(cand, "Your data is downloading.")
+        self.shot(cand, "phone-6-download-my-data")
         cand.get_by_role("button", name="Log out").click()
         expect(cand.get_by_role("heading", name="Log in")).to_be_visible()
 

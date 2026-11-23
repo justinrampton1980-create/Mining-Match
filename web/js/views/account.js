@@ -1,6 +1,6 @@
-// Account: password, log out, delete (candidates).
+// Account: password, log out, download my data, delete (candidates).
 import { h, field, input, errorArea, onSubmit, actionButton, confirmButton, toast } from '../dom.js';
-import { post, del } from '../api.js';
+import { post, del, download } from '../api.js';
 
 const ROLE = { candidate: 'Candidate account', employer: 'Employer account', admin: 'Administrator' };
 
@@ -32,6 +32,15 @@ export async function account(ctx) {
     h('p', {}, me.email),
     h('div', { class: 'actions' }, logout),
     h('section', {}, passwordForm),
+    h('section', { class: 'panel stack', 'aria-labelledby': 'export-title' },
+      h('h2', { id: 'export-title' }, 'Download your data'),
+      h('p', {}, me.role === 'candidate'
+        ? 'A ZIP file of everything Mining Match holds about you: your profile, licences, work history, uploaded documents, which employers asked for or unlocked your details, and your activity.'
+        : 'A ZIP file of everything Mining Match holds about your account and your activity.'),
+      h('div', { class: 'actions' }, actionButton('Download my data', async () => {
+        await download('/me/export', 'mining-match-my-data.zip');
+        toast('Your data is downloading.');
+      }))),
   ];
   if (me.role === 'candidate') {
     parts.push(h('section', { class: 'panel stack', 'aria-labelledby': 'del-title' },

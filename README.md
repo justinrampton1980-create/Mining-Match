@@ -238,6 +238,8 @@ Clients send `Authorization: Bearer <token>` from `/auth/login`. Errors: 400 bad
 - Keep `MM_SECURE_COOKIES` at its default (`1`) and set `MM_BASE_URL` to the real https address.
 - Get an independent security test before real candidate data goes in.
 
+**Data export.** `GET /me/export` returns a ZIP of everything held about the signed-in user (`data.json`, `README.txt` and their uploaded files), limited to 5 an hour. `GET /admin/users/{user_id}/export` does the same for any user, for admins. Both are logged. See `python/data_export.py` for exactly what's included and left out.
+
 ## Web app
 
 `web/` is the website, served by the API itself at `/`: one server to run, nothing to compile or install. It's built for phones first (navigation at the bottom, in reach of a thumb) and switches to a top bar on wider screens.

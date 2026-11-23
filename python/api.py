@@ -13,6 +13,7 @@ Error codes: 400 bad input, 401 not logged in, 403 not allowed, 404 not found,
 409 conflict (e.g. fee terms changed), 413 file too large, 429 too many attempts.
 """
 
+from datetime import datetime, timezone
 import os
 import sqlite3
 from pathlib import Path
@@ -28,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 import access_control as ac
 import auth
 import billing
+import data_export
 import data_layer as dl
 import reminders
 from storage import LocalStorage, sniff_type
@@ -755,6 +757,22 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         return billing.send_reminder(conn, billing_config, mailer, base_url, me, invoice_id)
 
     # =============================================================== admin
+    def _zip(data: bytes, label: str) -> Response:
+        name = f"mining-match-{label}-{datetime.now(timezone.utc).date().isoformat()}.zip"
+        return Response(data, media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+    @app.get("/me/export", tags=["auth"], response_class=Response)
+    def export_my_data(me: Me, conn: Conn):
+        """Download everything Mining Match holds about you (privacy access request)."""
+        auth.limit_data_export(conn, me.user_id)
+        return _zip(data_export.export_user_data(conn, me, storage, me.user_id), "my-data")
+
+    @app.get("/admin/users/{user_id}/export", tags=["admin"], response_class=Response)
+    def export_user_data(user_id: Id, me: Me, conn: Conn):
+        """Admin: everything held about one user, to answer an access request made by email."""
+        return _zip(data_export.export_user_data(conn, me, storage, user_id), "user-data")
+
     @app.put("/admin/users/{user_id}/active", tags=["admin"])
     def set_active(user_id: Id, body: UserActiveIn, me: Me, conn: Conn):
         ac.set_user_active(conn, me, user_id, body.active, body.reason)
