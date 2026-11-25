@@ -49,7 +49,7 @@ Run tests: `cd python && pip install -r requirements.txt && python -m unittest -
 - Required items count 1.0, preferred items 0.5.
 - A component with no requirement on the job is skipped and the other weights are renormalised.
 - Overall score is 0 to 100, rounded to 1 decimal.
-- **Eligible** means no required licence is missing or expired at start, and no required qualification is missing. Ranking sorts eligible first, then by score, then by name.
+- **Eligible** means no required licence is missing or expired at start, and no required qualification is missing. The engine ranks eligible first, then by score, then by name, then by candidate id. Employers never see that name order: their results are re-sorted so ties go by candidate id (see "No name leaks through ordering" under Access control).
 
 ## Result shape
 
