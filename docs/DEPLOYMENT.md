@@ -20,7 +20,7 @@
 
 **Use a Bluehost VPS in Sydney.** Bluehost's Self-Managed VPS, Managed VPS and Dedicated plans can be placed in a Sydney data centre. **Choose Sydney at checkout: Bluehost says the location can't be changed after the server is set up.** Check the location list on the order page when you buy, because the available locations differ by plan.
 
-- **Self-Managed VPS:** full root access. You (or ChatGPT and I, through you) run the steps below. This is the best fit.
+- **Self-Managed VPS:** full root access. You run the steps below. This is the best fit.
 - **Managed VPS:** check before buying that you get root/SSH access and can run your own service (systemd) and nginx. If the plan only gives cPanel tools for PHP sites, choose Self-Managed instead.
 - A small VPS (2 vCPU, 4 GB RAM, 80 GB+ disk) is plenty for a pilot.
 
