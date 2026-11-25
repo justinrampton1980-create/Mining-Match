@@ -28,7 +28,7 @@ cd ../js && node --test                                                # 20 test
 
 ## Known gaps worth a second opinion
 
-1. Virus scanning isn't connected in `api.app_from_environment()`.
+1. Virus scanning (`python/virus_scan.py`) has been tested against a stand-in ClamAV daemon speaking its protocol, not yet a real one. Run the `virus_scan.py --check` command in step 3 of `docs/DEPLOYMENT.md` on the server; it loads the app's own settings and runs as the service user.
 2. Rate limits rely on uvicorn's `--proxy-headers` behind nginx for the real client IP.
 3. SQLite with a single worker; the PostgreSQL move isn't started.
 4. Admins can see every record; there's no two-factor login.

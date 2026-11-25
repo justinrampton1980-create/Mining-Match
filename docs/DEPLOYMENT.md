@@ -33,6 +33,13 @@ Your domain and email can stay on any Bluehost plan; only the app needs the VPS.
 sudo apt update && sudo apt -y upgrade
 sudo apt -y install python3 python3-venv nginx certbot python3-certbot-nginx clamav-daemon ufw unattended-upgrades sqlite3 age
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
+# ClamAV: the first signature download can take a few minutes; the scanner starts after it.
+sudo systemctl enable --now clamav-freshclam clamav-daemon
+# Make ClamAV refuse, not silently skip, a file or archive that exceeds its size limits (otherwise a
+# booby-trapped archive could be saved without being fully scanned). Safe to run again.
+sudo sed -i '/^#\?\s*AlertExceedsMax\b/d' /etc/clamav/clamd.conf && echo 'AlertExceedsMax yes' | sudo tee -a /etc/clamav/clamd.conf
+sudo systemctl restart clamav-daemon
+sudo systemctl status clamav-daemon --no-pager   # wait until it says "active (running)"
 
 # 2. A user that runs the app, and the code
 sudo adduser --system --group --home /srv/mining-match miningmatch
@@ -46,6 +53,9 @@ sudo -u miningmatch /srv/mining-match/venv/bin/pip install -r requirements.txt
 sudo cp /srv/mining-match/app/deploy/env.example /etc/mining-match.env
 sudo nano /etc/mining-match.env
 sudo chown root:miningmatch /etc/mining-match.env && sudo chmod 640 /etc/mining-match.env
+
+# Virus scanning must work before the app starts taking uploads (expects "virus scanning OK"):
+sudo -u miningmatch bash -c 'set -a; . /etc/mining-match.env; cd /srv/mining-match/app/python && /srv/mining-match/venv/bin/python virus_scan.py --check'
 
 # 4. Database and the first admin (once)
 sudo -u miningmatch bash -c 'set -a; . /etc/mining-match.env; cd /srv/mining-match/app/python && /srv/mining-match/venv/bin/python -c "import os, data_layer as dl, access_control as ac, auth; c = dl.connect(os.environ[\"MM_DB\"]); dl.init_schema(c); dl.seed_catalog(c); ac.create_admin(c, input(\"Admin email: \"), auth.hash_password(input(\"Password: \")))"'
@@ -94,6 +104,32 @@ yourself to see every check's current result.
 tell you when the whole server is down. Sign up to a free uptime-monitoring service (for example
 UptimeRobot or Better Stack), add `https://YOUR-DOMAIN/health` as a monitor every 5 minutes,
 and have it email or text your phone. This is the one alert that comes from outside.
+
+## Virus scanning
+
+Every upload is checked by ClamAV before it's saved. The app talks to the ClamAV daemon on
+`/var/run/clamav/clamd.ctl` (change it with `MM_CLAMD_SOCKET`). `clamav-freshclam` keeps the virus
+signatures up to date by itself.
+
+**Scanning fails closed.** If the scanner is stopped, too slow (30 seconds for the whole scan,
+`MM_CLAMD_TIMEOUT`) or gives any unclear or cut-short answer, uploads are refused with "uploads are
+paused because virus scanning is unavailable" and nothing is saved. The rest of the site keeps
+working. Infected files are refused, and both kinds of refusal are written to the activity log.
+
+- **Keep ClamAV on the same server.** A scanner on another machine is refused (the app won't start)
+  unless you set `MM_CLAMD_ALLOW_REMOTE=1`, because ClamAV's network protocol is neither encrypted
+  nor authenticated: candidates' documents would cross the network in the clear, and anyone on the
+  route could answer "OK" for an infected file. Set it only if the scanner is reached through an
+  authenticated, encrypted tunnel (for example WireGuard); then use `MM_CLAMD_HOST` and
+  `MM_CLAMD_PORT`.
+- **`AlertExceedsMax yes` must be set** in `/etc/clamav/clamd.conf` (step 1 does it). Without it
+  ClamAV skips a file or archive member over its size limits without flagging it, and the upload
+  would be saved only partly checked. With it, such a file is refused like an infected one.
+- ClamAV needs about 1.5 GB of memory; the 4 GB VPS suggested above has room for it.
+- If uploads say scanning is unavailable: `sudo systemctl restart clamav-daemon`, wait a minute,
+  then run the `virus_scan.py --check` command from step 3.
+- `MM_VIRUS_SCAN=0` turns scanning off, but only for local development: the app refuses to start
+  with it on a live site (`MM_SECURE_COOKIES` unset or `1`).
 
 ## Backups
 
@@ -144,7 +180,8 @@ every few months after.
 
 ## Before real candidates sign up
 
-- [ ] Connect virus scanning of uploads (see SECURITY.md). **Not yet built into the production app.**
+- [ ] `grep AlertExceedsMax /etc/clamav/clamd.conf` shows `AlertExceedsMax yes`.
+- [ ] `virus_scan.py --check` says "virus scanning OK" (run it as in step 3, so it uses the app's own settings), and uploading a file as a test candidate works.
 - [ ] `MM_SECURE_COOKIES` unset or `1`, `MM_DOCS=0`, `MM_BASE_URL` is the https address.
 - [ ] Email sends for real (sign up a test account).
 - [ ] `MM_ALERT_EMAIL` set; `python -m monitoring` shows every check ok; an outside uptime monitor watches `/health`.

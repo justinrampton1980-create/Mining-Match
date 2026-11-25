@@ -40,6 +40,8 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 **Security monitoring.** Server errors and rate-limit refusals are emailed to `MM_ALERT_EMAIL`. A 5-minute check (`python -m monitoring`) watches the site, HTTPS certificate, disk space, backups and ClamAV, flags bursts of refused actions and failed logins, and reports every new admin login. Alerts are sent once, repeated every 6 hours, and followed by an all-clear. An outside uptime monitor still has to be set up for the server being down.
 
+**Virus scanning.** Every upload is streamed to ClamAV before it's saved. Infected files are refused; if ClamAV is down or unsure, uploads are refused rather than saved unscanned. The live app can't run with scanning off.
+
 **Daily job.** `python -m daily` sends reminders, then issues invoices that are due.
 
 ## Not built yet
@@ -48,7 +50,6 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 |---|---|
 | PostgreSQL | Only SQLite works. Fine for a pilot on one server; move before scaling. |
 | Licence register checks | Admins can mark an uploaded document as checked by hand. Nothing checks government registers automatically. |
-| Virus scanning of uploads | A hook exists (`scan_upload` in `create_app`), but the production app doesn't connect a scanner. **Must be connected before real uploads.** |
 | Uploads in cloud storage | Files are saved on the server's disk (`MM_FILES`). |
 | Live deployment | The deployment files in `deploy/` have **not been run on a real server**. |
 | Independent security test | Not done. Needed before real candidate data. |
@@ -62,7 +63,7 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 ## Known limitations to fix before going live
 
-1. **Virus scanning** isn't connected (see above).
+1. **Virus scanning** is built but has only been tested against a stand-in ClamAV daemon. Before taking uploads, run the `virus_scan.py --check` command in step 3 of `docs/DEPLOYMENT.md` on the server; it loads the app's own settings and runs as the service user.
 2. **Real client IP behind a proxy:** rate limits use the connecting address. Behind nginx, uvicorn must be started with `--proxy-headers --forwarded-allow-ips=127.0.0.1` (as in `deploy/mining-match.service`), or every user will share one address and hit the limits together.
 3. **One server only:** SQLite and local uploads mean the app can't yet run across several servers.
 4. **Licence renewal cycles** in `db/catalog_seed.json` are general guidance and need checking against the regulators.
@@ -77,7 +78,7 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 | Web app | Plain JavaScript modules with no framework and no build step, served from `web/` by the API |
 | Matching engine | `python/matching_engine.py` (used by the server) and `js/matchingEngine.js` (identical results, for other clients) |
 | PDF invoices | reportlab |
-| Email | SMTP with STARTTLS, or printed to the console when not configured |
+| Email | SMTP with STARTTLS (the mail server's certificate and name are checked), or printed to the console when not configured |
 | Tests | Python unittest, Node's test runner, Playwright with Chrome for browser tests |
 
 **Authentication.**

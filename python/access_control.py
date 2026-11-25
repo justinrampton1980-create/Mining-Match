@@ -120,6 +120,11 @@ def _ok(conn, principal, action, resource_type=None, resource_id=None, detail=No
     _audit(conn, principal, action, "allowed", resource_type, resource_id, detail)
 
 
+def record_upload_rejected(conn, principal, candidate_id: str, reason: str) -> None:
+    """Log an upload refused by the virus scan (or because scanning was unavailable)."""
+    _audit(conn, principal, "upload_document", "denied", "candidate", candidate_id, reason)
+
+
 def _deny(conn, principal, action, resource_type, resource_id, reason) -> NoReturn:
     _audit(conn, principal, action, "denied", resource_type, resource_id, reason)
     raise AccessDenied(f"not allowed: {action}")
