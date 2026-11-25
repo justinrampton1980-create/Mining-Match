@@ -4,9 +4,13 @@ Every uploaded file is streamed to clamd before it's saved. The check fails clos
 is down, slow, or answers anything other than a clear "OK" or "FOUND", the upload is refused
 with ScanUnavailable, never saved unscanned.
 
-Talks clamd's own protocol (INSTREAM) over its Unix socket or TCP, so it needs no extra
-packages. On Ubuntu, `apt install clamav-daemon` runs clamd on /var/run/clamav/clamd.ctl
-and the clamav-freshclam service keeps its virus signatures up to date.
+Talks clamd's own protocol (INSTREAM) over its Unix socket, so it needs no extra packages.
+On Ubuntu, `apt install clamav-daemon` runs clamd on /var/run/clamav/clamd.ctl and the
+clamav-freshclam service keeps its virus signatures up to date.
+
+TCP (MM_CLAMD_HOST) exists for a scanner on this machine or one reached through an authenticated,
+encrypted tunnel. clamd's network protocol is neither encrypted nor authenticated, so from_env()
+refuses any other address unless MM_CLAMD_ALLOW_REMOTE=1.
 
 Check a server from the command line (scans a harmless standard test file, EICAR):
 
@@ -14,10 +18,12 @@ Check a server from the command line (scans a harmless standard test file, EICAR
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import socket
 import struct
 import sys
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -40,27 +46,57 @@ class VirusFound(ValueError):
         self.signature = signature
 
 
+def _is_local(host: str) -> bool:
+    """True for localhost and loopback addresses (127.0.0.0/8, ::1): traffic that never leaves this machine."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:  # a name, which could point anywhere
+        return False
+
+
 @dataclass(frozen=True)
 class ClamdScanner:
     socket_path: Optional[str] = DEFAULT_SOCKET  # used unless host is set
     host: Optional[str] = None
     port: int = 3310
-    timeout: float = 30.0
+    timeout: float = 30.0  # for the whole scan: connecting, sending the file and waiting for the answer
 
     @classmethod
     def from_env(cls) -> "ClamdScanner":
         host = os.environ.get("MM_CLAMD_HOST", "").strip() or None
+        if host and not _is_local(host) and os.environ.get("MM_CLAMD_ALLOW_REMOTE") != "1":
+            raise ValueError(
+                f"MM_CLAMD_HOST={host} is not a local address. clamd's network protocol is neither encrypted nor "
+                "authenticated: candidates' documents would cross the network in the clear, and anyone on the "
+                "route could answer 'OK' for an infected file. Run ClamAV on this server and use MM_CLAMD_SOCKET. "
+                "Only for a scanner reached through an authenticated, encrypted tunnel, set MM_CLAMD_ALLOW_REMOTE=1.")
         return cls(socket_path=os.environ.get("MM_CLAMD_SOCKET", DEFAULT_SOCKET), host=host,
                    port=int(os.environ.get("MM_CLAMD_PORT", "3310")),
                    timeout=float(os.environ.get("MM_CLAMD_TIMEOUT", "30")))
 
-    def _connect(self) -> socket.socket:
+    @staticmethod
+    def _arm(s: socket.socket, deadline: float) -> None:
+        """Give the next socket step only the time left in the scan's overall budget.
+
+        A socket timeout alone applies to each step, so a scanner that sends one byte every few
+        seconds could hold a request open far longer than the limit."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise socket.timeout("the virus scan took longer than its time limit")
+        s.settimeout(remaining)
+
+    def _connect(self, deadline: float) -> socket.socket:
+        remaining = deadline - time.monotonic()
         try:
+            if remaining <= 0:
+                raise socket.timeout("the virus scan took longer than its time limit")
             if self.host:
-                return socket.create_connection((self.host, self.port), timeout=self.timeout)
+                return socket.create_connection((self.host, self.port), timeout=remaining)
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
-                s.settimeout(self.timeout)
+                s.settimeout(remaining)
                 s.connect(self.socket_path)
             except OSError:
                 s.close()
@@ -69,24 +105,28 @@ class ClamdScanner:
         except OSError as e:
             raise ScanUnavailable(f"can't reach the virus scanner: {e}") from e
 
-    @staticmethod
-    def _reply(s: socket.socket) -> str:
+    @classmethod
+    def _reply(cls, s: socket.socket, deadline: float) -> str:
+        """clamd's answer, which ends with a NUL byte. An answer cut short is an error, never a verdict."""
         data = b""
         while not data.endswith(b"\0"):
+            cls._arm(s, deadline)
             chunk = s.recv(4096)
             if not chunk:
-                break
+                raise ConnectionError("the virus scanner hung up before finishing its answer")
             data += chunk
             if len(data) > 4096:
-                break
+                raise ConnectionError("the virus scanner's answer was far longer than expected")
         return data.rstrip(b"\0").decode("utf-8", "replace").strip()
 
     def ping(self) -> None:
         """Raise ScanUnavailable unless clamd answers PONG."""
+        deadline = time.monotonic() + self.timeout
         try:
-            with self._connect() as s:
+            with self._connect(deadline) as s:
+                self._arm(s, deadline)
                 s.sendall(b"zPING\0")
-                reply = self._reply(s)
+                reply = self._reply(s, deadline)
         except OSError as e:
             raise ScanUnavailable(f"the virus scanner didn't answer: {e}") from e
         if reply != "PONG":
@@ -94,14 +134,18 @@ class ClamdScanner:
 
     def scan(self, data: bytes) -> None:
         """Return if the file is clean; raise VirusFound or ScanUnavailable otherwise."""
+        deadline = time.monotonic() + self.timeout
         try:
-            with self._connect() as s:
+            with self._connect(deadline) as s:
+                self._arm(s, deadline)
                 s.sendall(b"zINSTREAM\0")
                 for i in range(0, len(data), CHUNK):
                     part = data[i:i + CHUNK]
+                    self._arm(s, deadline)
                     s.sendall(struct.pack("!L", len(part)) + part)
+                self._arm(s, deadline)
                 s.sendall(struct.pack("!L", 0))
-                reply = self._reply(s)
+                reply = self._reply(s, deadline)
         except OSError as e:  # includes timeouts and a scanner closing the connection early
             raise ScanUnavailable(f"the virus scan didn't finish: {e}") from e
         if reply == "stream: OK":

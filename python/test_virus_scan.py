@@ -6,6 +6,7 @@ import socket
 import struct
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -22,6 +23,14 @@ from virus_scan import EICAR, ClamdScanner, ScanUnavailable, VirusFound
 
 PASSWORD = "Correct-horse-9"
 PDF = b"%PDF-1.4\n1 0 obj << >> endobj\n"
+SCANNER_SETTINGS = ("MM_VIRUS_SCAN", "MM_CLAMD_SOCKET", "MM_CLAMD_HOST", "MM_CLAMD_PORT", "MM_CLAMD_TIMEOUT",
+                    "MM_CLAMD_ALLOW_REMOTE")
+
+
+def forget_scanner_settings():
+    """Call inside a mock.patch.dict(os.environ): ignore scanner settings that happen to be set on this machine."""
+    for name in SCANNER_SETTINGS:
+        os.environ.pop(name, None)
 
 
 class FakeClamd:
@@ -79,6 +88,15 @@ class FakeClamd:
             return  # read the whole file, then hang up without an answer
         if self.mode == "hang":
             self.stop.wait(2)
+            return
+        if self.mode == "unterminated":
+            conn.sendall(b"stream: OK")  # the right words, but cut short: no end marker
+            return
+        if self.mode == "trickle":
+            for byte in b"stream: OK\0":  # a valid answer, but one byte at a time
+                conn.sendall(bytes([byte]))
+                if self.stop.wait(0.2):
+                    return
             return
         if self.mode == "error":
             conn.sendall(b"INSTREAM size limit exceeded. ERROR\0")
@@ -157,13 +175,46 @@ class ScannerTest(unittest.TestCase):
         with mock.patch("sys.stderr", new_callable=io.StringIO):
             self.assertEqual(virus_scan.check(ClamdScanner(socket_path=self.path + "x", timeout=1)), 1)
 
+    def test_an_answer_cut_short_is_never_clean(self):
+        # Right words, no end marker: the scanner may have died mid-answer, so it can't be trusted.
+        with self.assertRaises(ScanUnavailable):
+            self.clamd("unterminated").scan(PDF)
+
+    def test_the_whole_scan_has_one_time_limit(self):
+        # Each byte of the answer arrives well inside the 0.5 s socket timeout, so only a limit on the
+        # whole scan stops this: without one the scan would run for over two seconds and pass.
+        self.servers.append(FakeClamd(self.path, "trickle"))
+        scanner = ClamdScanner(socket_path=self.path, timeout=0.5)
+        started = time.monotonic()
+        with self.assertRaises(ScanUnavailable):
+            scanner.scan(PDF)
+        self.assertLess(time.monotonic() - started, 1.5)
+
     def test_settings_come_from_the_environment(self):
         with mock.patch.dict(os.environ, {"MM_CLAMD_SOCKET": "/run/x.ctl", "MM_CLAMD_TIMEOUT": "5"}, clear=False):
+            os.environ.pop("MM_CLAMD_HOST", None)
             s = ClamdScanner.from_env()
         self.assertEqual((s.socket_path, s.host, s.timeout), ("/run/x.ctl", None, 5.0))
-        with mock.patch.dict(os.environ, {"MM_CLAMD_HOST": "10.0.0.5", "MM_CLAMD_PORT": "3311"}, clear=False):
+        with mock.patch.dict(os.environ, {"MM_CLAMD_HOST": "127.0.0.1", "MM_CLAMD_PORT": "3311"}, clear=False):
             s = ClamdScanner.from_env()
-        self.assertEqual((s.host, s.port), ("10.0.0.5", 3311))
+        self.assertEqual((s.host, s.port), ("127.0.0.1", 3311))
+
+    def test_a_scanner_on_another_machine_needs_an_explicit_opt_in(self):
+        # clamd's network protocol is neither encrypted nor authenticated, so documents would cross the
+        # network in the clear and anyone on the route could answer "OK" for an infected file.
+        for host in ("10.0.0.5", "scanner.example.com", "8.8.8.8"):
+            with self.subTest(host=host):
+                with mock.patch.dict(os.environ, {"MM_CLAMD_HOST": host}, clear=False):
+                    os.environ.pop("MM_CLAMD_ALLOW_REMOTE", None)
+                    with self.assertRaises(ValueError):
+                        ClamdScanner.from_env()
+                    os.environ["MM_CLAMD_ALLOW_REMOTE"] = "1"  # the operator says it is tunnelled
+                    self.assertEqual(ClamdScanner.from_env().host, host)
+        for host in ("localhost", "127.0.0.1", "::1"):  # never leaves this machine
+            with self.subTest(host=host):
+                with mock.patch.dict(os.environ, {"MM_CLAMD_HOST": host}, clear=False):
+                    os.environ.pop("MM_CLAMD_ALLOW_REMOTE", None)
+                    self.assertEqual(ClamdScanner.from_env().host, host)
 
 
 class UploadsAreScanned(unittest.TestCase):
@@ -294,9 +345,11 @@ class RealClamd(UploadsAreScanned):
 
 class ProductionSettings(unittest.TestCase):
     def test_the_live_app_always_scans(self):
-        with mock.patch.dict(os.environ, {"MM_SECURE_COOKIES": "1"}, clear=False):
-            os.environ.pop("MM_VIRUS_SCAN", None)
-            with self.assertLogs("mining_match", "ERROR"):  # nothing at the default socket here
+        # The start-up ping is made to fail, so this passes whether or not ClamAV runs on this machine.
+        with mock.patch.dict(os.environ, {"MM_SECURE_COOKIES": "1"}, clear=False), \
+                mock.patch.object(ClamdScanner, "ping", side_effect=ScanUnavailable("no scanner here")):
+            forget_scanner_settings()
+            with self.assertLogs("mining_match", "ERROR"):
                 scanner = api.scanner_from_environment()
         self.assertIsInstance(scanner, ClamdScanner)
 
@@ -320,8 +373,9 @@ class ProductionSettings(unittest.TestCase):
     def test_app_from_environment_wires_the_scanner_in(self):
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.dict(os.environ, {"MM_DB": f"{d}/mm.db", "MM_FILES": f"{d}/files"}, clear=False), \
+                mock.patch.object(ClamdScanner, "ping", side_effect=ScanUnavailable("no scanner here")), \
                 mock.patch.object(api, "create_app", return_value="app") as create:
-            os.environ.pop("MM_VIRUS_SCAN", None)
+            forget_scanner_settings()
             with self.assertLogs("mining_match", "ERROR"):
                 api.app_from_environment()
         self.assertIsInstance(create.call_args.kwargs["scan_upload"], ClamdScanner)

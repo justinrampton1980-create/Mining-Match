@@ -43,6 +43,9 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Every upload is streamed to ClamAV before it's saved; infected files are refused.
 - It fails closed: if ClamAV is down, slow or unclear, uploads are refused, never saved unscanned.
 - A live site can't run with scanning off: `MM_VIRUS_SCAN=0` is refused unless the site is in local-development mode.
+- The whole scan has one 30-second limit, and an answer that is cut short counts as "couldn't scan", never as clean.
+- ClamAV runs on the same server. A scanner on another machine is refused unless the operator confirms an authenticated, encrypted tunnel (`MM_CLAMD_ALLOW_REMOTE=1`), because ClamAV's network protocol is neither encrypted nor authenticated.
+- ClamAV is set to flag, not skip, files or archives over its size limits (`AlertExceedsMax yes`, set by the deployment steps).
 - Refused uploads are written to the activity log.
 
 **Backups**

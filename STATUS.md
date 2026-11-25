@@ -63,7 +63,7 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 ## Known limitations to fix before going live
 
-1. **Virus scanning** is built but has only been tested against a stand-in ClamAV daemon. Run `virus_scan.py --check` on the server before taking uploads.
+1. **Virus scanning** is built but has only been tested against a stand-in ClamAV daemon. Before taking uploads, run the `virus_scan.py --check` command in step 3 of `docs/DEPLOYMENT.md` on the server; it loads the app's own settings and runs as the service user.
 2. **Real client IP behind a proxy:** rate limits use the connecting address. Behind nginx, uvicorn must be started with `--proxy-headers --forwarded-allow-ips=127.0.0.1` (as in `deploy/mining-match.service`), or every user will share one address and hit the limits together.
 3. **One server only:** SQLite and local uploads mean the app can't yet run across several servers.
 4. **Licence renewal cycles** in `db/catalog_seed.json` are general guidance and need checking against the regulators.
