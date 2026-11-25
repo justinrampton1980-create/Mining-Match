@@ -36,6 +36,12 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Filenames are cleaned, and storage paths can't escape the upload folder.
 - Files are always sent as downloads, never displayed inside the site.
 
+**Virus scanning**
+- Every upload is streamed to ClamAV before it's saved; infected files are refused.
+- It fails closed: if ClamAV is down, slow or unclear, uploads are refused, never saved unscanned.
+- A live site can't run with scanning off: `MM_VIRUS_SCAN=0` is refused unless the site is in local-development mode.
+- Refused uploads are written to the activity log.
+
 **Backups**
 - Nightly backups are streamed straight into encryption to a public key whose private key is kept off the server, so no unencrypted copy is ever written to disk and a break-in at the server or the backup storage doesn't expose them.
 - There is no unencrypted fallback: a missing or wrong key (including the private key pasted by mistake), a missing tool, a database that fails its integrity check or any failed step means nothing is written and an alert email is sent. Unencrypted backups from older versions are removed.
@@ -51,7 +57,6 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 
 | Gap | What to do |
 |---|---|
-| Uploads aren't virus-scanned in production | Connect ClamAV (installed by the deployment steps) through the `scan_upload` hook in `api.app_from_environment()`. |
 | No two-factor login | Add it, at least for admins. |
 | Single-server SQLite | Move to PostgreSQL; copy the (encrypted) backups off the server. |
 | Deployment files not run on a real server | Test them on the VPS; run `nginx -t`. |
