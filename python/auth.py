@@ -28,6 +28,7 @@ import os
 import re
 import secrets
 import smtplib
+import ssl
 import time
 from email.message import EmailMessage
 from typing import Optional, Protocol
@@ -122,10 +123,19 @@ class ConsoleMailer:
 
 
 class SMTPMailer:
-    """Sends through an SMTP server (e.g. Amazon SES, Postmark, Microsoft 365) using STARTTLS."""
+    """Sends through an SMTP server (e.g. Amazon SES, Postmark, Microsoft 365) using STARTTLS.
 
-    def __init__(self, host: str, port: int, username: str, password: str, sender: str):
+    The mail server's certificate and name are checked before anything secret is sent. Python's
+    smtplib doesn't do this by default (a bare starttls() accepts any certificate), which would
+    let anyone on the network path read the emails, including password-reset links and invoices,
+    and the mail account's password. If the check fails, send() raises ssl.SSLError and nothing
+    is sent. tls_context is for a relay with its own certificate authority (and for tests).
+    """
+
+    def __init__(self, host: str, port: int, username: str, password: str, sender: str,
+                 tls_context: Optional[ssl.SSLContext] = None):
         self.host, self.port, self.username, self.password, self.sender = host, port, username, password, sender
+        self.tls_context = tls_context
 
     def send(self, to: str, subject: str, body: str, attachments: Optional[list] = None) -> None:
         msg = EmailMessage()
@@ -134,8 +144,9 @@ class SMTPMailer:
         for name, data, mime in attachments or []:
             maintype, subtype = mime.split("/", 1)
             msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=name)
+        context = self.tls_context or ssl.create_default_context()  # verifies the certificate and host name
         with smtplib.SMTP(self.host, self.port, timeout=20) as smtp:
-            smtp.starttls()
+            smtp.starttls(context=context)
             smtp.login(self.username, self.password)
             smtp.send_message(msg)
 

@@ -78,7 +78,7 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 | Web app | Plain JavaScript modules with no framework and no build step, served from `web/` by the API |
 | Matching engine | `python/matching_engine.py` (used by the server) and `js/matchingEngine.js` (identical results, for other clients) |
 | PDF invoices | reportlab |
-| Email | SMTP with STARTTLS, or printed to the console when not configured |
+| Email | SMTP with STARTTLS (the mail server's certificate and name are checked), or printed to the console when not configured |
 | Tests | Python unittest, Node's test runner, Playwright with Chrome for browser tests |
 
 **Authentication.**
