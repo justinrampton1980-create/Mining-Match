@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Candidate LinkedIn cards</title>
+<style>
+@font-face { font-family: "Barlow"; font-weight: 600; src: url(../../web/fonts/barlow-latin-600-normal.woff2) format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 500; src: url(../../web/fonts/barlow-latin-500-normal.woff2) format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 700; src: url(../../web/fonts/barlow-condensed-latin-700-normal.woff2) format("woff2"); }
+:root {
+  --slate: #1f2b33; --slate-2: #2a3943; --slate-3: #364852;
+  --concrete: #eceff1; --line: #d3d9dc; --field: #8e9ba3; --muted: #56636b;
+  --hivis: #ff6b1a; --reflect: #d9dfe3;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: #0e1418; padding: 40px; display: grid; gap: 40px; justify-content: center; }
+.card {
+  position: relative; width: 1080px; height: 1080px; overflow: hidden;
+  background: var(--slate); color: #fff; font-family: "Barlow", sans-serif;
+}
+.topo { position: absolute; right: -220px; top: -260px; width: 900px; height: 900px; opacity: .09; }
+.kicker {
+  position: absolute; left: 88px; top: 92px;
+  font-family: "Barlow", sans-serif; font-weight: 600; font-size: 28px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--hivis);
+}
+h1 {
+  position: absolute; left: 88px; top: 146px; width: 904px;
+  font-family: "Barlow Condensed", sans-serif; font-weight: 700;
+  font-size: 128px; line-height: .96; letter-spacing: -.005em;
+}
+.art { position: absolute; left: 88px; top: 452px; width: 904px; height: 480px; }
+.foot {
+  position: absolute; left: 88px; right: 88px; bottom: 64px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.brand { display: flex; align-items: center; gap: 16px;
+  font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 44px; }
+.brand i { display: block; width: 22px; height: 22px; background: var(--hivis); }
+.tag { font-weight: 500; font-size: 26px; color: var(--field); }
+.lbl { font-family: "Barlow", sans-serif; font-weight: 600; font-size: 28px; letter-spacing: .1em; }
+</style>
+</head>
+<body>
+
+<!-- shared topographic texture -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <g id="topo" fill="none" stroke="#fff" stroke-width="3">
+      <path d="M450 120c160 0 300 90 320 240s-60 330-240 350-360-60-390-220 150-370 310-370z"/>
+      <path d="M450 190c120 0 230 70 245 185s-50 255-185 270-280-45-300-170 115-285 240-285z"/>
+      <path d="M455 260c85 0 160 50 170 130s-35 180-130 190-195-30-210-120 85-200 170-200z"/>
+      <path d="M460 330c50 0 92 30 98 78s-20 105-76 110-114-18-122-70 50-118 100-118z"/>
+      <path d="M450 50c200 0 370 110 395 300s-80 410-300 435-445-75-480-275 185-460 385-460z"/>
+    </g>
+  </defs>
+</svg>
+
+<!-- 1. How matching works -->
+<section class="card" id="c1">
+  <svg class="topo" viewBox="0 0 900 900"><use href="#topo"/></svg>
+  <p class="kicker">For mining candidates</p>
+  <h1>Know where<br>you stand</h1>
+  <svg class="art" viewBox="0 0 904 480">
+    <g class="lbl">
+      <text x="0" y="62" fill="#ff6b1a">LICENCES</text>
+      <text x="0" y="158" fill="#d9dfe3">QUALIFICATIONS</text>
+      <text x="0" y="254" fill="#d9dfe3">SKILLS</text>
+      <text x="0" y="350" fill="#d9dfe3">EXPERIENCE</text>
+      <text x="0" y="446" fill="#d9dfe3">LOCATION</text>
+    </g>
+    <g>
+      <rect x="360" y="34" width="544" height="36" rx="18" fill="#364852"/>
+      <rect x="360" y="34" width="500" height="36" rx="18" fill="#ff6b1a"/>
+      <rect x="360" y="130" width="544" height="36" rx="18" fill="#364852"/>
+      <rect x="360" y="130" width="408" height="36" rx="18" fill="#d9dfe3"/>
+      <rect x="360" y="226" width="544" height="36" rx="18" fill="#364852"/>
+      <rect x="360" y="226" width="320" height="36" rx="18" fill="#d9dfe3"/>
+      <rect x="360" y="322" width="544" height="36" rx="18" fill="#364852"/>
+      <rect x="360" y="322" width="462" height="36" rx="18" fill="#d9dfe3"/>
+      <rect x="360" y="418" width="544" height="36" rx="18" fill="#364852"/>
+      <rect x="360" y="418" width="380" height="36" rx="18" fill="#d9dfe3"/>
+    </g>
+  </svg>
+  <div class="foot"><div class="brand"><i></i>Mining Match</div><div class="tag">Matched on what counts</div></div>
+</section>
+
+<!-- 2. Licence expiry -->
+<section class="card" id="c2">
+  <svg class="topo" viewBox="0 0 900 900"><use href="#topo"/></svg>
+  <p class="kicker">For mining candidates</p>
+  <h1>Renew before<br>day one</h1>
+  <svg class="art" viewBox="0 0 904 480">
+    <!-- calendar -->
+    <rect x="90" y="30" width="460" height="440" rx="26" fill="#eceff1"/>
+    <path d="M90 56a26 26 0 0 1 26-26h408a26 26 0 0 1 26 26v74H90z" fill="#56636b"/>
+    <rect x="186" y="6" width="22" height="58" rx="11" fill="#8e9ba3"/>
+    <rect x="432" y="6" width="22" height="58" rx="11" fill="#8e9ba3"/>
+    <g fill="#d3d9dc">
+      <!-- 7 x 4 grid; cell 52, gap 8; origin 124,158 -->
+      <rect x="124" y="158" width="48" height="48" rx="8"/><rect x="184" y="158" width="48" height="48" rx="8"/><rect x="244" y="158" width="48" height="48" rx="8"/><rect x="304" y="158" width="48" height="48" rx="8"/><rect x="364" y="158" width="48" height="48" rx="8"/><rect x="424" y="158" width="48" height="48" rx="8"/><rect x="484" y="158" width="32" height="48" rx="8" opacity="0"/>
+      <rect x="124" y="234" width="48" height="48" rx="8"/><rect x="184" y="234" width="48" height="48" rx="8"/>
+      <rect x="124" y="310" width="48" height="48" rx="8"/><rect x="184" y="310" width="48" height="48" rx="8"/><rect x="244" y="310" width="48" height="48" rx="8"/><rect x="304" y="310" width="48" height="48" rx="8"/><rect x="364" y="310" width="48" height="48" rx="8"/><rect x="424" y="310" width="48" height="48" rx="8"/>
+      <rect x="124" y="386" width="48" height="48" rx="8"/><rect x="184" y="386" width="48" height="48" rx="8"/><rect x="244" y="386" width="48" height="48" rx="8"/><rect x="304" y="386" width="48" height="48" rx="8"/>
+    </g>
+    <!-- circled date spanning two cells -->
+    <text x="358" y="278" text-anchor="middle" font-family="Barlow Condensed" font-weight="700" font-size="64" fill="#1f2b33">14</text>
+    <ellipse cx="358" cy="258" rx="74" ry="46" fill="none" stroke="#ff6b1a" stroke-width="9" transform="rotate(-6 358 257)"/>
+    <!-- bell -->
+    <g transform="translate(730 230)">
+      <path d="M-78 66c14-18 18-40 18-78 0-46 26-78 60-84 34 6 60 38 60 84 0 38 4 60 18 78z" fill="#ff6b1a"/>
+      <rect x="-92" y="62" width="184" height="20" rx="10" fill="#ff6b1a"/>
+      <circle cx="0" cy="104" r="20" fill="#ff6b1a"/>
+      <circle cx="0" cy="-104" r="12" fill="#ff6b1a"/>
+      <path d="M-118 -60q-24 40 0 80M118 -60q24 40 0 80" fill="none" stroke="#d9dfe3" stroke-width="8" stroke-linecap="round"/>
+    </g>
+  </svg>
+  <div class="foot"><div class="brand"><i></i>Mining Match</div><div class="tag">Expiry reminders, built in</div></div>
+</section>
+
+<!-- 3. Gaps, not just scores -->
+<section class="card" id="c3">
+  <svg class="topo" viewBox="0 0 900 900"><use href="#topo"/></svg>
+  <p class="kicker">For mining candidates</p>
+  <h1>Know your<br>next step</h1>
+  <svg class="art" viewBox="0 0 904 480">
+    <g>
+      <rect x="0" y="12" width="72" height="72" rx="14" fill="#ff6b1a"/>
+      <path d="M18 48l14 14 26-28" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="108" y="34" width="380" height="28" rx="14" fill="#d9dfe3"/>
+
+      <rect x="0" y="136" width="72" height="72" rx="14" fill="#ff6b1a"/>
+      <path d="M18 172l14 14 26-28" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="108" y="158" width="300" height="28" rx="14" fill="#d9dfe3"/>
+
+      <rect x="4" y="264" width="64" height="64" rx="12" fill="none" stroke="#8e9ba3" stroke-width="7"/>
+      <rect x="108" y="282" width="340" height="28" rx="14" fill="#56636b"/>
+
+      <rect x="4" y="388" width="64" height="64" rx="12" fill="none" stroke="#8e9ba3" stroke-width="7"/>
+      <rect x="108" y="406" width="260" height="28" rx="14" fill="#56636b"/>
+    </g>
+    <!-- upward arrow -->
+    <g transform="translate(720 0)">
+      <path d="M0 440V52" stroke="#ff6b1a" stroke-width="40" stroke-linecap="round"/>
+      <path d="M-100 160L0 40 100 160" fill="none" stroke="#ff6b1a" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </svg>
+  <div class="foot"><div class="brand"><i></i>Mining Match</div><div class="tag">See the gaps, close them</div></div>
+</section>
+
+<!-- 4. Location and FIFO -->
+<section class="card" id="c4">
+  <svg class="topo" viewBox="0 0 900 900"><use href="#topo"/></svg>
+  <p class="kicker">For mining candidates</p>
+  <h1>Local or FIFO,<br>both count</h1>
+  <svg class="art" viewBox="0 0 904 480">
+    <!-- terrain contours -->
+    <g fill="none" stroke="#364852" stroke-width="4">
+      <path d="M-20 420c120-40 220 10 330-30s210-90 330-60 200 40 290 10"/>
+      <path d="M-20 360c110-30 200 0 300-40s220-110 340-80 190 30 290 0"/>
+      <path d="M-20 470c140-20 260 10 380-10s240-50 360-30 140 20 210 10"/>
+      <path d="M520 150c50-30 120-30 160 0s20 80-40 90-150-60-120-90z"/>
+      <path d="M480 160c60-60 190-60 250 0s20 130-80 140-230-80-170-140z"/>
+    </g>
+    <!-- dashed route -->
+    <path d="M200 330C260 120 520 40 700 130" fill="none" stroke="#d9dfe3" stroke-width="7" stroke-dasharray="4 22" stroke-linecap="round"/>
+    <!-- pin A (home) -->
+    <g transform="translate(200 380)">
+      <path d="M0 0C-34-40-54-70-54-100a54 54 0 0 1 108 0c0 30-20 60-54 100z" fill="#d9dfe3"/>
+      <circle cx="0" cy="-100" r="20" fill="#1f2b33"/>
+    </g>
+    <!-- pin B (site) -->
+    <g transform="translate(700 196)">
+      <path d="M0 0C-40-46-64-82-64-118a64 64 0 0 1 128 0c0 36-24 72-64 118z" fill="#ff6b1a"/>
+      <circle cx="0" cy="-118" r="24" fill="#1f2b33"/>
+    </g>
+    <text x="200" y="450" text-anchor="middle" class="lbl" fill="#d9dfe3">HOME</text>
+    <text x="700" y="262" text-anchor="middle" class="lbl" fill="#ff6b1a">SITE</text>
+  </svg>
+  <div class="foot"><div class="brand"><i></i>Mining Match</div><div class="tag">Relocate or fly in, fly out</div></div>
+</section>
+
+<!-- 5. Get started -->
+<section class="card" id="c5">
+  <svg class="topo" viewBox="0 0 900 900"><use href="#topo"/></svg>
+  <p class="kicker">For mining candidates</p>
+  <h1>Your profile,<br>in minutes</h1>
+  <svg class="art" viewBox="0 0 904 480">
+    <!-- laptop -->
+    <rect x="132" y="6" width="640" height="410" rx="22" fill="#56636b"/>
+    <rect x="152" y="26" width="600" height="370" rx="10" fill="#eceff1"/>
+    <path d="M60 428h784l-30 44H90z" fill="#8e9ba3"/>
+    <rect x="392" y="428" width="120" height="12" rx="6" fill="#56636b"/>
+    <!-- form -->
+    <circle cx="232" cy="104" r="44" fill="#d3d9dc"/>
+    <rect x="300" y="78" width="220" height="22" rx="11" fill="#56636b"/>
+    <rect x="300" y="114" width="150" height="16" rx="8" fill="#8e9ba3"/>
+    <g fill="#fff" stroke="#8e9ba3" stroke-width="3">
+      <rect x="188" y="176" width="528" height="44" rx="8"/>
+      <rect x="188" y="236" width="528" height="44" rx="8"/>
+      <rect x="188" y="296" width="250" height="44" rx="8"/>
+    </g>
+    <g fill="#d3d9dc">
+      <rect x="206" y="192" width="150" height="12" rx="6"/>
+      <rect x="206" y="252" width="190" height="12" rx="6"/>
+      <rect x="206" y="312" width="120" height="12" rx="6"/>
+    </g>
+    <rect x="494" y="290" width="222" height="58" rx="10" fill="#ff6b1a"/>
+    <text x="605" y="333" text-anchor="middle" font-family="Barlow Condensed" font-weight="700" font-size="40" fill="#fff">Start</text>
+  </svg>
+  <div class="foot"><div class="brand"><i></i>Mining Match</div><div class="tag">Licences, skills, experience</div></div>
+</section>
+
+</body>
+</html>
