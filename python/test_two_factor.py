@@ -2,6 +2,7 @@
 import base64
 import io
 import os
+import sqlite3
 import time
 import unittest
 from unittest import mock
@@ -318,6 +319,34 @@ class AdminLogin(ApiTest):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id = ?", (uid,)).fetchone()[0], 0)
         finally:
             conn.close()
+
+    def test_turning_two_factor_on_and_making_the_session_are_one_transaction(self):
+        # A reset or password change landing between "two-factor turned on" and "session made" would leave a live
+        # session behind it. They are one transaction: while it runs, nobody else can write.
+        self.invite_admin()
+        started = self.raw_login("second@example.com").json()
+        info = self.client.post("/auth/two-factor/setup", json={"challenge": started["challenge"]}).json()
+        self.totp_secrets["second@example.com"] = info["secret"].replace(" ", "")
+        code = self.totp("second@example.com")
+        uid = self.user_id("second@example.com")
+        real, seen = auth._insert_session, []
+
+        def watch(conn, user_id, role):
+            other = sqlite3.connect(self.db, timeout=0.2)
+            try:
+                other.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))  # what a reset would do
+                other.commit()
+                seen.append("let in")
+            except sqlite3.OperationalError:
+                seen.append("locked out")
+            finally:
+                other.close()
+            return real(conn, user_id, role)
+
+        with mock.patch.object(two_factor, "clock", lambda: self.totp_now), mock.patch.object(auth, "_insert_session", watch):
+            r = self.client.post("/auth/two-factor/setup/confirm", json={"challenge": started["challenge"], "code": code})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(seen, ["locked out"])
 
     def test_pending_login_steps_die_when_the_password_changes_or_is_reset(self):
         # A login started with the old password must not finish after the password changed: the holder of an

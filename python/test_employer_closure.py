@@ -213,6 +213,11 @@ class EmployerClosure(ApiTest):
         finally:
             conn.close()
         self.assertEqual([in_transaction for sql, in_transaction in trace if "COUNT(*) FROM invoices" in sql], [True])
+        # In a transaction isn't enough: a plain (deferred) one doesn't hold the write lock. It must be IMMEDIATE.
+        statements = [sql for sql, _ in trace]
+        begin = next(i for i, sql in enumerate(statements) if sql.upper().startswith("BEGIN IMMEDIATE"))
+        count = next(i for i, sql in enumerate(statements) if "COUNT(*) FROM invoices" in sql)
+        self.assertLess(begin, count)
 
     def test_a_refused_closure_lets_go_of_the_write_lock(self):
         s = self.busy_employer(paid=False)

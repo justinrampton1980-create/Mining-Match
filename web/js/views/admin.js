@@ -168,7 +168,7 @@ async function usersTab(ctx) {
           confirmButton('Reset two-factor', 'Tap again: they’ll set it up again at next login', async () => {
             await post(`/admin/users/${u.user_id}/reset-two-factor`);
             toast('Two-factor login reset. They’ve been logged out.');
-            ctx.reload('h1');  // a fresh button: this one stays armed after success, so one more tap would reset again
+            await ctx.reload('h1');  // waits for the fresh list: until it replaces this button, which is still armed, it stays disabled
           }, { class: 'btn small' })) : null,
         u.closed ? null : u.user_id === ctx.me.user_id ? h('p', { class: 'small muted' }, 'This is you.') : u.is_active
           ? h('div', { class: 'actions' }, h('div', { class: 'grow' }, reason),

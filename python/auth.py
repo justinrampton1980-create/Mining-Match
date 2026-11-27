@@ -396,15 +396,20 @@ def login(conn, email: str, password: str, ip: str) -> dict:
     return _start_session(conn, row["id"], row["role"])
 
 
-def _start_session(conn, user_id: str, role: str) -> dict:
+def _insert_session(conn, user_id: str, role: str) -> dict:
+    """Make a session row. Doesn't commit: the caller's transaction decides when it comes into being."""
     token, now = secrets.token_urlsafe(32), clock()
-    with conn:
-        conn.execute("DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?", (user_id, now))
-        conn.execute(
-            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
-            (_hash_token(token), user_id, now, now + SESSION_MAX_SECONDS, now),
-        )
+    conn.execute("DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?", (user_id, now))
+    conn.execute(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
+        (_hash_token(token), user_id, now, now + SESSION_MAX_SECONDS, now),
+    )
     return {"token": token, "expires_at": now + SESSION_MAX_SECONDS, "user_id": user_id, "role": role}
+
+
+def _start_session(conn, user_id: str, role: str) -> dict:
+    with conn:
+        return _insert_session(conn, user_id, role)
 
 
 # ----------------------------------------------------------- two-factor (admins)
@@ -456,10 +461,12 @@ def confirm_two_factor(conn, challenge: str, code: str) -> dict:
     if step is None:
         _wrong_code(conn, ch, row["id"], two_factor.TwoFactorError(
             "that code isn't right: check the app shows Mining Match and try the newest code"))
-    # The challenge is used up inside enable(), in the same transaction, so a reset that lands after it was read
-    # above can't be overtaken: no challenge, nothing turned on and no session.
-    codes = two_factor.enable(conn, row["id"], ch["pending_secret"], step, setup_challenge=ch["token_hash"])
-    session = _start_session(conn, row["id"], row["role"])
+    # One transaction for all of it: the challenge is used up, two-factor turned on, older sessions ended and the
+    # new session made. A reset or password change that lands before it finds no challenge and this fails with
+    # nothing written; one that lands after it deletes this session too. Nothing can slip in between.
+    with conn:
+        codes = two_factor.turn_on(conn, row["id"], ch["pending_secret"], step, setup_challenge=ch["token_hash"])
+        session = _insert_session(conn, row["id"], row["role"])
     session["recovery_codes"] = codes
     return session
 
