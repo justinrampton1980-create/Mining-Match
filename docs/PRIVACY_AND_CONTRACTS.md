@@ -8,14 +8,18 @@ This explains what the code does. It isn't legal advice. The privacy policy, can
 |---|---|
 | Candidates control who sees them | Employers see licences, skills, experience and state, but not name, email, phone, summary, employer names or documents, until the candidate approves that employer. Candidates can decline or withdraw approval. |
 | Hide from employers | A "Show my profile to employers" switch removes the candidate from all searches. |
+| Download their data | Every user can download a ZIP of everything held about them from their account page: profile, licences, work history, uploaded files, which employers asked for or unlocked their details, shortlists they're on (with the employer's status and notes), hires, reminders and their own activity. Admins can export any user's data to answer a request made by email. Every export is logged. Passwords, login tokens and the fee an employer was charged are left out. |
 | Delete the account | Candidates can delete their account; their profile, licences, history and uploaded files are removed. Business records (introductions, hires, invoices) are kept, as they must be for tax and fee purposes. |
+| Employers close their account | Employers can close their account (with their password), or ask an admin to. Their sign-in and the personal details of their staff (contact name, phone, billing email) are removed, their jobs close, and their shortlists, notes on candidates and contact requests are deleted. Company details, introductions, hires, invoices and accepted fee terms are kept for tax and fee records. It can't be done while an invoice is unpaid, so closing can't be used to avoid a fee. |
 | Collect only what matching needs | Matching uses licences, qualifications, skills, experience and location only. It doesn't use age, gender or any other personal attribute, and ties are broken by an internal id, not by name. |
 | Explain automated scores | Every score comes with its reasons (what's missing, what's expiring), shown to both the employer and the candidate. |
 | Limit bulk access | Each search returns at most a capped number of candidates, and the audit log records searches. |
 | Opt out of emails | Licence reminders can be turned off from the profile or from a link in every email. |
 | Onshore hosting | The deployment guide requires an Australian data centre (APP 8). |
 
-**Still needed:** a privacy policy. Under amendments to the Privacy Act, privacy policies must explain significant automated decisions from **10 December 2026**: say that candidates are scored and ranked automatically, what information is used, and that employers make the final decision. You also need a process for access and correction requests, since there's no self-service data export yet, and a data breach response plan (Notifiable Data Breaches scheme).
+**Still needed:** a privacy policy. Under amendments to the Privacy Act, privacy policies must explain significant automated decisions from **10 December 2026**: say that candidates are scored and ranked automatically, what information is used, and that employers make the final decision. You also need a process for access and correction requests (users can download their own data, and admins can export it for requests made by email; corrections are made on the site or by an admin), and a data breach response plan (Notifiable Data Breaches scheme).
+
+**For your lawyer:** a candidate's export includes the notes employers write on their shortlists, since those are personal information held about the candidate. Ask whether any of it should be held back under Australian Privacy Principle 12; it's one line in `python/data_export.py` to remove.
 
 ## Business contracting protections in the code
 

@@ -34,6 +34,7 @@ from email.message import EmailMessage
 from typing import Optional, Protocol
 
 import data_layer as dl
+import two_factor
 
 # ---------------------------------------------------------------- settings
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2 ** 14, 8, 1
@@ -56,6 +57,7 @@ RESENDS_PER_EMAIL = (3, 3600)
 # Employer candidate searches and rankings: generous for real recruiting, but stops one
 # employer sweeping the whole candidate pool with thousands of varied searches.
 EMPLOYER_SEARCHES_PER_HOUR = (100, 3600)
+DATA_EXPORTS_PER_HOUR = (5, 3600)  # each export packs every uploaded file
 EMPLOYER_SEARCHES_PER_DAY = (500, 24 * 3600)
 
 COMMON_PASSWORDS = frozenset({
@@ -233,6 +235,12 @@ def _limit(conn, bucket: str, key: str, rule: tuple, message: str) -> None:
         raise TooManyAttempts(message, retry_after=max(1, oldest + window - clock()))
 
 
+def limit_data_export(conn, user_id: str) -> None:
+    """Count one self-service data export; raise TooManyAttempts over the limit."""
+    _limit(conn, "data_export", user_id, DATA_EXPORTS_PER_HOUR, "too many data downloads, try again later")
+    _record(conn, "data_export", user_id)
+
+
 def limit_employer_search(conn, employer_id: str) -> None:
     """Count one candidate search or ranking by an employer; raise TooManyAttempts over the limit."""
     message = "too many candidate searches, try again later"
@@ -383,14 +391,103 @@ def login(conn, email: str, password: str, ip: str) -> dict:
         raise AccountSuspended("this account is suspended, contact support")
     if row["email_verified_at"] is None:
         raise EmailNotVerified("confirm your email address first (check your inbox)")
+    if row["role"] == "admin":  # no session yet: the second step comes first (two_factor.py)
+        try:
+            return two_factor.start_challenge(conn, row["id"], row["password_hash"])
+        except two_factor.TwoFactorError:  # the password was changed or reset while it was being checked
+            raise InvalidCredentials("wrong email or password") from None
+    return _start_session(conn, row["id"], row["role"])
+
+
+def _insert_session(conn, user_id: str, role: str) -> dict:
+    """Make a session row. Doesn't commit: the caller's transaction decides when it comes into being."""
     token, now = secrets.token_urlsafe(32), clock()
+    conn.execute("DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?", (user_id, now))
+    conn.execute(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
+        (_hash_token(token), user_id, now, now + SESSION_MAX_SECONDS, now),
+    )
+    return {"token": token, "expires_at": now + SESSION_MAX_SECONDS, "user_id": user_id, "role": role}
+
+
+def _start_session(conn, user_id: str, role: str) -> dict:
     with conn:
-        conn.execute("DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?", (row["id"], now))
-        conn.execute(
-            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
-            (_hash_token(token), row["id"], now, now + SESSION_MAX_SECONDS, now),
-        )
-    return {"token": token, "expires_at": now + SESSION_MAX_SECONDS, "user_id": row["id"], "role": row["role"]}
+        return _insert_session(conn, user_id, role)
+
+
+# ----------------------------------------------------------- two-factor (admins)
+def _challenge_account(conn, ch: dict):
+    row = conn.execute("SELECT id, email, role, is_active FROM users WHERE id = ?", (ch["user_id"],)).fetchone()
+    if row is None or not row["is_active"]:
+        two_factor.end_challenge(conn, ch)
+        raise AccountSuspended("this account is suspended, contact support")
+    return row
+
+
+def _wrong_code(conn, ch: dict, user_id: str, error: Exception):
+    two_factor.count_wrong_code(conn, ch)
+    _record(conn, "two_factor", user_id)
+    raise error
+
+
+def login_two_factor(conn, challenge: str, code: str) -> dict:
+    """Second step of an admin login: an app code or a recovery code. Starts the session."""
+    ch = two_factor.challenge(conn, challenge, "required")
+    _limit(conn, "two_factor", ch["user_id"], two_factor.WRONG_CODES_PER_USER, "too many wrong codes, try again later")
+    row = _challenge_account(conn, ch)
+    try:
+        used = two_factor.check_code(conn, row["id"], code)
+    except two_factor.TwoFactorError as e:
+        _wrong_code(conn, ch, row["id"], e)
+    # The challenge is used up and the session made in one transaction, as in confirm_two_factor. A password change
+    # or reset that landed after the challenge was read has deleted it: this fails and no session is made.
+    with conn:
+        two_factor.use_up_challenge(conn, ch["token_hash"], row["id"], "required")
+        session = _insert_session(conn, row["id"], row["role"])
+    session["recovery_codes_left"] = two_factor.recovery_codes_left(conn, row["id"])
+    session["used_recovery_code"] = used == "recovery"
+    return session
+
+
+def setup_two_factor(conn, challenge: str) -> dict:
+    """First admin login: a new secret and QR code for the authenticator app."""
+    ch = two_factor.challenge(conn, challenge, "setup")
+    row = _challenge_account(conn, ch)
+    return two_factor.begin_setup(conn, ch, row["email"])
+
+
+def confirm_two_factor(conn, challenge: str, code: str) -> dict:
+    """A code from the newly set-up app turns two-factor on. Returns the session and recovery codes."""
+    ch = two_factor.challenge(conn, challenge, "setup")
+    _limit(conn, "two_factor", ch["user_id"], two_factor.WRONG_CODES_PER_USER, "too many wrong codes, try again later")
+    row = _challenge_account(conn, ch)
+    if not ch["pending_secret"]:
+        raise two_factor.TwoFactorError("set up your authenticator app first")
+    step = two_factor.matching_step(ch["pending_secret"], code, None)
+    if step is None:
+        _wrong_code(conn, ch, row["id"], two_factor.TwoFactorError(
+            "that code isn't right: check the app shows Mining Match and try the newest code"))
+    # One transaction for all of it: the challenge is used up, two-factor turned on, older sessions ended and the
+    # new session made. A reset or password change that lands before it finds no challenge and this fails with
+    # nothing written; one that lands after it deletes this session too. Nothing can slip in between.
+    with conn:
+        codes = two_factor.turn_on(conn, row["id"], ch["pending_secret"], step, setup_challenge=ch["token_hash"])
+        session = _insert_session(conn, row["id"], row["role"])
+    session["recovery_codes"] = codes
+    return session
+
+
+def new_recovery_codes(conn, user_id: str, code: str) -> list:
+    """Logged-in admin: replace the recovery codes, after a current app code.
+
+    Wrong codes count against the same per-account limit as at login. Without that, someone holding a stolen
+    session could guess the app code here, and the new recovery codes would outlive the session."""
+    _limit(conn, "two_factor", user_id, two_factor.WRONG_CODES_PER_USER, "too many wrong codes, try again later")
+    try:
+        return two_factor.new_recovery_codes(conn, user_id, code)
+    except two_factor.TwoFactorError:
+        _record(conn, "two_factor", user_id)
+        raise
 
 
 def session_user(conn, token: Optional[str]) -> Optional[str]:
@@ -398,13 +495,16 @@ def session_user(conn, token: Optional[str]) -> Optional[str]:
     if not token:
         return None
     row = conn.execute(
-        "SELECT token_hash, user_id, expires_at, last_seen_at FROM sessions WHERE token_hash = ?",
+        "SELECT s.token_hash, s.user_id, s.expires_at, s.last_seen_at, u.role, "
+        "(SELECT enabled_at FROM two_factor t WHERE t.user_id = s.user_id) AS two_factor_on "
+        "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?",
         (_hash_token(token),),
     ).fetchone()
     now = clock()
     if row is None:
         return None
-    if row["expires_at"] <= now or now - row["last_seen_at"] >= SESSION_IDLE_SECONDS:
+    admin_without_two_factor = row["role"] == "admin" and not row["two_factor_on"]
+    if admin_without_two_factor or row["expires_at"] <= now or now - row["last_seen_at"] >= SESSION_IDLE_SECONDS:
         with conn:
             conn.execute("DELETE FROM sessions WHERE token_hash = ?", (row["token_hash"],))
         return None
@@ -431,6 +531,8 @@ def change_password(conn, token: str, current_password: str, new_password: str) 
     with conn:
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(new_password), user_id))
         conn.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, _hash_token(token)))
+        # A login step started with the old password must not finish after it was changed.
+        conn.execute("DELETE FROM login_challenges WHERE user_id = ?", (user_id,))
 
 
 # ----------------------------------------------------------- password reset
@@ -463,6 +565,8 @@ def reset_password(conn, token: str, new_password: str) -> None:
             (hash_password(new_password), user_id),
         )
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        # A login step started with the old password must not finish after it was reset.
+        conn.execute("DELETE FROM login_challenges WHERE user_id = ?", (user_id,))
 
 
 def send_admin_invite(conn, mailer: Mailer, base_url: str, user_id: str) -> None:

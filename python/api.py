@@ -14,6 +14,7 @@ Error codes: 400 bad input, 401 not logged in, 403 not allowed, 404 not found,
 """
 
 import logging
+from datetime import datetime, timezone
 import os
 import sqlite3
 from pathlib import Path
@@ -30,8 +31,10 @@ import access_control as ac
 import auth
 import billing
 import monitoring
+import data_export
 import data_layer as dl
 import reminders
+import two_factor
 from storage import LocalStorage, sniff_type
 from virus_scan import ClamdScanner, ScanUnavailable
 
@@ -75,6 +78,25 @@ class LoginIn(In):
     email: Email
     password: Password
     use_cookie: bool = False  # the website: session kept in an HttpOnly cookie, token not returned
+
+
+class CloseAccountIn(In):
+    password: Optional[str] = Field(default=None, max_length=200)  # employers closing their own account
+    reason: Optional[Annotated[str, StringConstraints(max_length=200)]] = None  # admins; no personal details
+
+
+class TwoFactorIn(In):
+    challenge: Annotated[str, StringConstraints(min_length=10, max_length=200)]
+    code: Annotated[str, StringConstraints(min_length=6, max_length=20)]
+    use_cookie: bool = False
+
+
+class ChallengeIn(In):
+    challenge: Annotated[str, StringConstraints(min_length=10, max_length=200)]
+
+
+class CodeIn(In):
+    code: Annotated[str, StringConstraints(min_length=6, max_length=20)]
 
 
 class TokenIn(In):
@@ -355,6 +377,7 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         return _error(429, str(e), {"Retry-After": str(e.retry_after)})
 
     app.add_exception_handler(auth.TooManyAttempts, too_many)
+    app.add_exception_handler(two_factor.TwoFactorError, lambda r, e: _error(400, str(e)))
 
     def server_error(request: Request, e: Exception):
         route = request.scope.get("route")
@@ -446,16 +469,48 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         auth.resend_verification(conn, mailer, base_url, body.email, client_ip)
         return CHECK_EMAIL
 
-    @app.post("/auth/login", tags=["auth"])
-    def login(body: LoginIn, conn: Conn, client_ip: IP):
-        session = auth.login(conn, body.email, body.password, client_ip)
-        if not body.use_cookie:
+    def _session_response(session: dict, use_cookie: bool):
+        if not use_cookie:
             return session
         token = session.pop("token")
         response = JSONResponse(session)
         response.set_cookie(SESSION_COOKIE, token, max_age=auth.SESSION_MAX_SECONDS, path="/",
                             httponly=True, secure=secure_cookies, samesite="strict")
         return response
+
+    @app.post("/auth/login", tags=["auth"])
+    def login(body: LoginIn, conn: Conn, client_ip: IP):
+        """Admins get {two_factor: "required" | "setup", challenge} instead of a session."""
+        session = auth.login(conn, body.email, body.password, client_ip)
+        if "two_factor" in session:
+            return session
+        return _session_response(session, body.use_cookie)
+
+    @app.post("/auth/login/two-factor", tags=["auth"])
+    def login_two_factor(body: TwoFactorIn, conn: Conn):
+        return _session_response(auth.login_two_factor(conn, body.challenge, body.code), body.use_cookie)
+
+    @app.post("/auth/two-factor/setup", tags=["auth"])
+    def setup_two_factor(body: ChallengeIn, conn: Conn):
+        return auth.setup_two_factor(conn, body.challenge)
+
+    @app.post("/auth/two-factor/setup/confirm", tags=["auth"])
+    def confirm_two_factor(body: TwoFactorIn, conn: Conn):
+        return _session_response(auth.confirm_two_factor(conn, body.challenge, body.code), body.use_cookie)
+
+    @app.get("/auth/two-factor", tags=["auth"])
+    def two_factor_status(me: Me, conn: Conn):
+        return {"enabled": two_factor.is_enabled(conn, me.user_id),
+                "recovery_codes_left": two_factor.recovery_codes_left(conn, me.user_id)}
+
+    @app.post("/auth/two-factor/recovery-codes", tags=["auth"])
+    def new_recovery_codes(body: CodeIn, me: Me, conn: Conn):
+        return {"recovery_codes": auth.new_recovery_codes(conn, me.user_id, body.code)}
+
+    @app.post("/admin/users/{user_id}/reset-two-factor", status_code=204, tags=["admin"])
+    def reset_two_factor(user_id: Id, me: Me, conn: Conn):
+        ac.reset_two_factor(conn, me, user_id)
+        return Response(status_code=204)
 
     @app.post("/auth/logout", status_code=204, tags=["auth"])
     def logout(me: Me, conn: Conn, token: Annotated[Optional[str], Depends(bearer)]):
@@ -610,6 +665,17 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     @app.get("/contact-requests", tags=["contact"])
     def contact_requests(me: Me, conn: Conn):
         return ac.list_contact_requests(conn, me)
+
+    @app.post("/employers/{employer_id}/close", tags=["employers"])
+    def close_employer(employer_id: Id, body: CloseAccountIn, me: Me, conn: Conn,
+                       token: Annotated[Optional[str], Depends(bearer)]):
+        """Close an employer account (the employer, with their password, or an admin)."""
+        result = ac.close_employer(conn, me, employer_id, password=body.password, reason=body.reason)
+        if me.role != "employer":
+            return result
+        response = JSONResponse(result)  # they're logged out: clear the website's cookie too
+        response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, secure=secure_cookies, samesite="strict")
+        return response
 
     @app.put("/contact-releases/{employer_id}", tags=["contact"])
     def set_release(employer_id: Id, body: ReleaseIn, me: Me, conn: Conn):
@@ -794,6 +860,24 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
         return billing.send_reminder(conn, billing_config, mailer, base_url, me, invoice_id)
 
     # =============================================================== admin
+    def _zip(data: bytes, label: str) -> Response:
+        name = f"mining-match-{label}-{datetime.now(timezone.utc).date().isoformat()}.zip"
+        return Response(data, media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+    @app.get("/me/export", tags=["auth"], response_class=Response)
+    def export_my_data(me: Me, conn: Conn):
+        """Download everything Mining Match holds about you (privacy access request)."""
+        auth.limit_data_export(conn, me.user_id)
+        return _zip(data_export.export_user_data(conn, me, storage, me.user_id), "my-data")
+
+    @app.get("/admin/users/{user_id}/export", tags=["admin"], response_class=Response)
+    def export_user_data(user_id: Id, me: Me, conn: Conn):
+        """Admin: everything held about one user, to answer an access request made by email."""
+        if user_id == me.user_id:  # your own data through this route counts against the same hourly limit as /me/export
+            auth.limit_data_export(conn, me.user_id)
+        return _zip(data_export.export_user_data(conn, me, storage, user_id), "user-data")
+
     @app.put("/admin/users/{user_id}/active", tags=["admin"])
     def set_active(user_id: Id, body: UserActiveIn, me: Me, conn: Conn):
         ac.set_user_active(conn, me, user_id, body.active, body.reason)

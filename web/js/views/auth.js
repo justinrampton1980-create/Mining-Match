@@ -28,22 +28,99 @@ export async function login(ctx) {
     field('Email', email), field('Password', password), error.el, resend,
     h('button', { type: 'submit', class: 'btn primary' }, 'Log in')), error, async () => {
     resend.replaceChildren();
+    let started;
     try {
-      await post('/auth/login', { email: email.value, password: password.value, use_cookie: true });
+      started = await post('/auth/login', { email: email.value, password: password.value, use_cookie: true });
     } catch (err) {
       if (err.status === 403 && /confirm/i.test(err.message)) {
         resend.replaceChildren(h('a', { href: `#/check-email?email=${encodeURIComponent(email.value)}` }, 'Send a new confirmation link'));
       }
       throw err;
     }
+    if (started && started.two_factor) {  // admins: a code from their authenticator app as well
+      panel.replaceChildren(...(started.two_factor === 'setup'
+        ? await twoFactorSetup(ctx, started.challenge, panel) : twoFactorCode(ctx, started.challenge)));
+      panel.querySelector('h2').focus();
+      return;
+    }
     await ctx.refresh();
     ctx.go(ctx.home());
   });
-  return h('div', { class: 'auth' }, hero(),
-    h('section', { class: 'panel stack', 'aria-labelledby': 'login-title' },
-      h('h2', { id: 'login-title' }, 'Log in'), form,
-      h('p', { class: 'small' }, h('a', { href: '#/forgot-password' }, 'Forgot your password?')),
-      h('p', { class: 'small' }, 'New to Mining Match? ', h('a', { href: '#/signup' }, 'Create an account'))));
+  const panel = h('section', { class: 'panel stack', 'aria-labelledby': 'login-title' },
+    h('h2', { id: 'login-title', tabindex: '-1' }, 'Log in'), form,
+    h('p', { class: 'small' }, h('a', { href: '#/forgot-password' }, 'Forgot your password?')),
+    h('p', { class: 'small' }, 'New to Mining Match? ', h('a', { href: '#/signup' }, 'Create an account')));
+  return h('div', { class: 'auth' }, hero(), panel);
+}
+
+function codeInput() {
+  return input({ inputmode: 'numeric', autocomplete: 'one-time-code', required: true, maxlength: '20', class: 'code-input' });
+}
+
+// Second step of an admin login: a code from the app, or a recovery code.
+function twoFactorCode(ctx, challenge) {
+  const code = codeInput();
+  const error = errorArea();
+  const form = onSubmit(h('form', { class: 'stack' },
+    field('Code', code, 'The 6-digit code for Mining Match in your authenticator app. Lost your phone? Enter a recovery code instead.'),
+    error.el, h('button', { type: 'submit', class: 'btn primary' }, 'Continue')), error, async () => {
+    const session = await post('/auth/login/two-factor', { challenge, code: code.value, use_cookie: true });
+    if (session.used_recovery_code) {
+      toast(`Recovery code used. ${session.recovery_codes_left} left: make new ones from your account page.`);
+    }
+    await ctx.refresh();
+    ctx.go(ctx.home());
+  });
+  return [h('h2', { id: 'login-title', tabindex: '-1' }, 'Enter your code'), form,
+    h('p', { class: 'small' }, h('a', { href: '#/login', onclick: (event) => { event.preventDefault(); ctx.reload('h2'); } }, 'Start again'))];
+}
+
+// First admin login: set up the authenticator app, then save the recovery codes.
+async function twoFactorSetup(ctx, challenge, panel) {
+  const info = await post('/auth/two-factor/setup', { challenge });
+  const code = codeInput();
+  const error = errorArea();
+  const qr = info.qr_svg
+    ? h('img', { class: 'qr', src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(info.qr_svg)}`,
+      alt: 'QR code for adding Mining Match to your authenticator app', width: '200', height: '200' })
+    : null;
+  const form = onSubmit(h('form', { class: 'stack' },
+    field('Code from the app', code, 'After adding Mining Match, enter the 6-digit code the app shows.'),
+    error.el, h('button', { type: 'submit', class: 'btn primary' }, 'Turn on two-factor login')), error, async () => {
+    const session = await post('/auth/two-factor/setup/confirm', { challenge, code: code.value, use_cookie: true });
+    panel.replaceChildren(...recoveryCodesView(session.recovery_codes, 'Save your recovery codes', async () => {
+      await ctx.refresh();
+      ctx.go(ctx.home());
+    }, 'login-title'));
+    panel.querySelector('h2').focus();
+  });
+  return [h('h2', { id: 'login-title', tabindex: '-1' }, 'Set up two-factor login'),
+    h('p', {}, 'Admin accounts need a code from an authenticator app (such as Google Authenticator or Microsoft Authenticator) as well as the password.'),
+    h('ol', { class: 'steps' },
+      h('li', {}, 'In the app, add an account and scan this code.', qr),
+      h('li', {}, 'Can’t scan it? Enter this key instead: ', h('code', { class: 'secret' }, info.secret),
+        ' or ', h('a', { href: info.otpauth_uri }, 'open it in the app on this phone'), '.')),
+    form];
+}
+
+// Shown once: after setup, and when making new codes from the account page. headingId: the id the section
+// around it points at with aria-labelledby, which this heading replaces (else the section loses its name).
+export function recoveryCodesView(codes, title, onDone, headingId) {
+  const save = () => {
+    const blob = new Blob([`Mining Match recovery codes\n\n${codes.join('\n')}\n\nEach code works once.\n`], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = h('a', { href: url, download: 'mining-match-recovery-codes.txt' });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return [h('h2', { id: headingId, tabindex: '-1' }, title),
+    h('p', {}, 'If you lose your phone, each of these codes lets you log in once instead of an app code. Keep them somewhere safe, such as a password manager. They won’t be shown again.'),
+    h('ul', { class: 'recovery-codes', 'aria-label': 'Recovery codes' }, codes.map((c) => h('li', {}, h('code', {}, c)))),
+    h('div', { class: 'actions' },
+      h('button', { type: 'button', class: 'btn', onclick: save }, 'Download codes'),
+      actionButton('I’ve saved them, continue', onDone, { class: 'btn primary' }))];
 }
 
 export async function signup(ctx) {

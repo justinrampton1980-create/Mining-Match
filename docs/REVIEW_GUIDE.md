@@ -20,7 +20,7 @@ For anyone reviewing this code, including the ChatGPT agent working on Mining Ma
 ## Running the checks
 
 ```bash
-cd python && pip install -r requirements.txt && python -m unittest    # 190 tests
+cd python && pip install -r requirements.txt && python -m unittest    # 283 tests
 cd ../js && node --test                                                # 20 tests
 ```
 
@@ -31,9 +31,10 @@ cd ../js && node --test                                                # 20 test
 1. Virus scanning (`python/virus_scan.py`) has been tested against a stand-in ClamAV daemon speaking its protocol, not yet a real one. Run the `virus_scan.py --check` command in step 3 of `docs/DEPLOYMENT.md` on the server; it loads the app's own settings and runs as the service user.
 2. Rate limits rely on uvicorn's `--proxy-headers` behind nginx for the real client IP.
 3. SQLite with a single worker; the PostgreSQL move isn't started.
-4. Admins can see every record; there's no two-factor login.
+4. Admins can see every record (their logins need two-factor, `python/two_factor.py`). The TOTP secret is stored as is in the database, as most apps do; someone with a copy of the database could make codes, but would still need the admin's password.
 5. The unsubscribe link page posts automatically when opened, the same as email confirmation. A mail scanner that runs page scripts could turn a candidate's reminders off.
 6. Deployment files have only been partly checked: the uvicorn command was run, but nginx and systemd were not.
+7. Ordinary logins (candidates and employers) read the account, check the password (slow on purpose, a fraction of a second) and only then start the session. A password reset that lands during that check would not end that one session, which needs someone who already knows the old password to time it. Admin logins don't have this gap (see the two-factor bullets in `SECURITY.md`); the same fix for everyone else is a small follow-up.
 
 ## Ways of working
 

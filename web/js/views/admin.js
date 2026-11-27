@@ -153,10 +153,24 @@ async function usersTab(ctx) {
         h('div', { class: 'row-main' }, h('h3', {}, u.candidate_name || u.company_name || u.email),
           h('span', { class: 'actions' },
             h('span', { class: 'badge' }, u.role),
-            u.is_active ? null : h('span', { class: 'badge bad' }, 'Suspended'),
+            u.closed ? h('span', { class: 'badge' }, 'Closed') : u.is_active ? null : h('span', { class: 'badge bad' }, 'Suspended'),
             u.email_verified ? null : h('span', { class: 'badge warn' }, 'Email not confirmed'))),
         h('p', { class: 'meta' }, h('span', {}, u.email), h('span', {}, `Joined ${fmtDate(u.created_at)}`)),
-        u.user_id === ctx.me.user_id ? h('p', { class: 'small muted' }, 'This is you.') : u.is_active
+        h('div', { class: 'actions' }, actionButton('Export data', () => download(`/admin/users/${u.user_id}/export`,
+          `mining-match-user-data-${u.user_id.slice(0, 8)}.zip`), { class: 'btn small', 'aria-label': `Export all data held about ${u.email}` })),
+        u.role === 'employer' && !u.closed ? h('div', { class: 'actions' },
+          confirmButton('Close account', 'Tap again: jobs close, sign-in is deleted', async () => {
+            await post(`/employers/${u.employer_id}/close`, { reason: 'closed on request' });
+            toast('Account closed. Invoices and hires are kept.');
+            ctx.reload('h1');
+          }, { class: 'btn small danger' })) : null,
+        u.role === 'admin' && u.user_id !== ctx.me.user_id ? h('div', { class: 'actions' },
+          confirmButton('Reset two-factor', 'Tap again: they’ll set it up again at next login', async () => {
+            await post(`/admin/users/${u.user_id}/reset-two-factor`);
+            toast('Two-factor login reset. They’ve been logged out.');
+            await ctx.reload('h1');  // waits for the fresh list: until it replaces this button, which is still armed, it stays disabled
+          }, { class: 'btn small' })) : null,
+        u.closed ? null : u.user_id === ctx.me.user_id ? h('p', { class: 'small muted' }, 'This is you.') : u.is_active
           ? h('div', { class: 'actions' }, h('div', { class: 'grow' }, reason),
             confirmButton('Suspend', 'Tap again to suspend', async () => {
               await put(`/admin/users/${u.user_id}/active`, { active: false, reason: reason.value || null });

@@ -1,12 +1,12 @@
 # Mining Match: development status
 
-Last updated 20 November 2026. This file describes only what exists in this repository. "Built and tested" means the code is here and automated tests cover it. Nothing has been deployed to a live server yet, and no real candidate data has been used.
+Last updated 27 November 2026. This file describes only what exists in this repository. "Built and tested" means the code is here and automated tests cover it. Nothing has been deployed to a live server yet, and no real candidate data has been used.
 
 ## Summary
 
-The platform runs end to end on one computer: candidates and employers can register, build profiles and post jobs. Candidates are matched and scored automatically. Employers can shortlist candidates, unlock contact details through a two-step consent and fee-terms process, and get invoiced for placements. It has not been deployed, has not had an independent security test, and still uses SQLite rather than PostgreSQL.
+The platform runs end to end on one computer: candidates and employers can register, build profiles and post jobs. Candidates are matched and scored automatically. Employers can shortlist candidates, unlock contact details through a two-step consent and fee-terms process, and get invoiced for placements. Admins log in with two-factor, any user can download their data, and employers can close their account. It has not been deployed, has not had an independent security test, and still uses SQLite rather than PostgreSQL.
 
-Test results at this commit: **190 Python tests** (including 2 full browser tests in Chrome and 17 that run the backup script for real) and **20 JavaScript tests**, all passing. Each feature area was also checked by deliberately inserting likely bugs and confirming the tests catch them.
+Test results at this commit: **283 Python tests** (including 2 full browser tests in Chrome, 17 that run the backup script for real and 6 that need a running ClamAV; those 23 are skipped on a machine without the tools) and **20 JavaScript tests**, all passing. Each feature area was also checked by deliberately inserting likely bugs and confirming the tests catch them.
 
 ## Your requested features
 
@@ -42,6 +42,10 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 **Virus scanning.** Every upload is streamed to ClamAV before it's saved. Infected files are refused; if ClamAV is down or unsure, uploads are refused rather than saved unscanned. The live app can't run with scanning off.
 
+**Data export (privacy access requests).** Any user can download a ZIP of everything held about them from their account page (limited to 5 an hour); admins can export any user's data from Accounts. It holds the profile, uploaded files, contact requests, introductions, shortlist entries, hires, reminders and the user's own activity, but no passwords, tokens or employer fees. Employer exports hold their company, jobs and accepted terms, never candidates' details. Every export is logged.
+
+**Employer account closure.** Employers close their own account from the account page, with their password; admins can close one on request. The sign-in, password, contact name, phone and billing email are removed, all jobs close, and shortlists (with their notes) and contact requests are deleted. Company name, ABN, introductions, hires, invoices and accepted fee terms are kept as business records. Closing is refused while an invoice is unpaid or still to be issued. A closed account can't be reactivated; the email can sign up again.
+
 **Daily job.** `python -m daily` sends reminders, then issues invoices that are due.
 
 ## Not built yet
@@ -54,9 +58,7 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 | Live deployment | The deployment files in `deploy/` have **not been run on a real server**. |
 | Independent security test | Not done. Needed before real candidate data. |
 | Legal documents | Privacy policy, candidate terms and employer terms aren't written. The fee-terms text in the app is a placeholder; a lawyer must write it. |
-| Two-factor login | Not built. Recommended for admin accounts. |
-| Data export (privacy access requests) | No self-service export. Admins can see the data, but there is no download. |
-| Employer account deletion | Candidates can delete their accounts; employers and admins can't (admins can suspend). |
+| Admin account deletion | Admins can be suspended but not deleted. |
 | Partial payments, adjustment notes, recurring subscriptions | Not built; see the README's invoicing section. |
 | Native phone apps | It's a phone-friendly website, not an App Store or Google Play app. |
 | Charts or analytics on dashboards | Not built. |
@@ -89,3 +91,4 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 - **No account enumeration:** sign-up, reset and login reveal nothing about which emails are registered.
 - **Rate limits:** on logins, sign-ups and emails, stored in the database.
 - **Roles:** candidate, employer and admin. The first admin is created from the server's command line, and later admins by invitation.
+- **Two-factor login for admins:** a code from an authenticator app at every admin login, set up on the first one; ten one-time recovery codes; another admin (or the server's command line) can reset it. Candidates and employers log in with a password only.
