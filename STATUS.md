@@ -44,6 +44,8 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 
 **Data export (privacy access requests).** Any user can download a ZIP of everything held about them from their account page (limited to 5 an hour); admins can export any user's data from Accounts. It holds the profile, uploaded files, contact requests, introductions, shortlist entries, hires, reminders and the user's own activity, but no passwords, tokens or employer fees. Employer exports hold their company, jobs and accepted terms, never candidates' details. Every export is logged.
 
+**Employer account closure.** Employers close their own account from the account page, with their password; admins can close one on request. The sign-in, password, contact name, phone and billing email are removed, all jobs close, and shortlists (with their notes) and contact requests are deleted. Company name, ABN, introductions, hires, invoices and accepted fee terms are kept as business records. Closing is refused while an invoice is unpaid or still to be issued. A closed account can't be reactivated; the email can sign up again.
+
 **Daily job.** `python -m daily` sends reminders, then issues invoices that are due.
 
 ## Not built yet
@@ -57,7 +59,7 @@ Test results at this commit: **190 Python tests** (including 2 full browser test
 | Independent security test | Not done. Needed before real candidate data. |
 | Legal documents | Privacy policy, candidate terms and employer terms aren't written. The fee-terms text in the app is a placeholder; a lawyer must write it. |
 | Two-factor login | Not built. Recommended for admin accounts. |
-| Employer account deletion | Candidates can delete their accounts; employers and admins can't (admins can suspend). |
+| Admin account deletion | Admins can be suspended but not deleted. |
 | Partial payments, adjustment notes, recurring subscriptions | Not built; see the README's invoicing section. |
 | Native phone apps | It's a phone-friendly website, not an App Store or Google Play app. |
 | Charts or analytics on dashboards | Not built. |

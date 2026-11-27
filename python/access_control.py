@@ -989,6 +989,9 @@ def set_user_active(conn, principal, user_id: str, active: bool, reason: Optiona
     p = _authorize(conn, principal, action, "admin")
     if user_id == p.user_id:
         _deny(conn, p, action, "user", user_id, "cannot change your own account status")
+    found = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+    if active and found and is_closed_email(found["email"]):
+        raise dl.DataError("this account was closed and can't be reactivated; the employer can sign up again")
     with conn:
         cur = conn.execute("UPDATE users SET is_active = ? WHERE id = ?", (1 if active else 0, user_id))
         if not active:
@@ -1030,6 +1033,59 @@ def authorize_data_export(conn, principal, user_id: str) -> Principal:
     return p
 
 
+CLOSED_EMAIL_DOMAIN = "closed.invalid"  # sign-in emails of closed accounts are replaced with this
+
+
+def is_closed_email(email: Optional[str]) -> bool:
+    return bool(email) and email.endswith("@" + CLOSED_EMAIL_DOMAIN)
+
+
+def close_employer(conn, principal, employer_id: str, *, password: Optional[str] = None,
+                   reason: Optional[str] = None) -> dict:
+    """Close an employer account: by the employer (with their password) or by an admin.
+
+    Removed: the sign-in email and password, the contact name, phone and billing email, all
+    sessions and email links, shortlists (with their notes on candidates) and contact requests.
+    Every job is closed, so none show to candidates. Kept, as business and tax records: the
+    company name, ABN and address, introductions, hires, invoices and accepted fee terms.
+    Refused while an invoice is unpaid or not yet issued, so a fee can't be dodged by closing.
+    """
+    import auth  # here, not at the top: auth is the layer above this one
+
+    action = "employer.close"
+    p = _authorize(conn, principal, action, "employer", "admin")
+    if p.role == "employer" and p.employer_id != employer_id:
+        _deny(conn, p, action, "employer", employer_id, "not your employer account")
+    row = conn.execute("SELECT e.user_id, u.email, u.password_hash FROM employers e JOIN users u ON u.id = e.user_id "
+                       "WHERE e.id = ?", (employer_id,)).fetchone()
+    if row is None:
+        raise dl.NotFoundError(f"employer not found: {employer_id}")
+    if is_closed_email(row["email"]):
+        raise dl.DataError("this account is already closed")
+    if p.role == "employer" and not auth.verify_password(str(password or ""), row["password_hash"]):
+        raise auth.InvalidCredentials("your password is wrong")
+    owing = conn.execute("SELECT COUNT(*) FROM invoices WHERE employer_id = ? AND status IN ('scheduled', 'issued')",
+                         (employer_id,)).fetchone()[0]
+    if owing:
+        raise dl.DataError(f"the account can't be closed while {owing} invoice{'s are' if owing != 1 else ' is'} "
+                           "unpaid or still to be issued; pay or settle them first")
+    user_id = row["user_id"]
+    with conn:
+        conn.execute("UPDATE users SET email = ?, password_hash = NULL, is_active = 0 WHERE id = ?",
+                     (f"closed-{user_id}@{CLOSED_EMAIL_DOMAIN}", user_id))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM auth_tokens WHERE user_id = ?", (user_id,))
+        conn.execute("UPDATE employers SET contact_name = NULL, phone = NULL, billing_email = NULL WHERE id = ?",
+                     (employer_id,))
+        jobs = conn.execute("UPDATE jobs SET status = 'closed', updated_at = CURRENT_TIMESTAMP "
+                            "WHERE employer_id = ? AND status IN ('draft', 'open')", (employer_id,)).rowcount
+        lists = conn.execute("DELETE FROM shortlists WHERE employer_id = ?", (employer_id,)).rowcount
+        requests = conn.execute("DELETE FROM contact_releases WHERE employer_id = ?", (employer_id,)).rowcount
+    note = "closed by the employer" if p.role == "employer" else "closed by an admin" + (f": {reason}" if reason else "")
+    _ok(conn, p, action, "employer", employer_id, note)
+    return {"closed": True, "jobs_closed": jobs, "shortlists_removed": lists, "contact_requests_removed": requests}
+
+
 def list_users(conn, principal, *, search: Optional[str] = None, role: Optional[str] = None,
                limit: int = 100) -> list:
     """Admin: find accounts by email or name, newest first."""
@@ -1063,6 +1119,7 @@ def list_users(conn, principal, *, search: Optional[str] = None, role: Optional[
     for r in rows:
         row = dict(r)
         row["is_active"], row["email_verified"] = bool(row["is_active"]), bool(row["email_verified"])
+        row["closed"] = is_closed_email(row["email"])
         out.append(row)
     return out
 

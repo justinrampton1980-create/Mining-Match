@@ -242,6 +242,8 @@ Clients send `Authorization: Bearer <token>` from `/auth/login`. Errors: 400 bad
 
 **Data export.** `GET /me/export` returns a ZIP of everything held about the signed-in user (`data.json`, `README.txt` and their uploaded files), limited to 5 an hour. `GET /admin/users/{user_id}/export` does the same for any user, for admins. Both are logged. See `python/data_export.py` for exactly what's included and left out.
 
+**Employer closure.** `POST /employers/{employer_id}/close` with `{"password": ...}` (the employer) or `{"reason": ...}` (an admin). Refused with 409 while an invoice is unpaid or scheduled. See `access_control.close_employer` for what's removed and what's kept.
+
 ## Web app
 
 `web/` is the website, served by the API itself at `/`: one server to run, nothing to compile or install. It's built for phones first (navigation at the bottom, in reach of a thumb) and switches to a top bar on wider screens.
