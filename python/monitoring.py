@@ -141,18 +141,15 @@ def check_backups(folder: str) -> Check:
     return Check("backups", True, f"newest backup {files[-1].name}, {age / 3600:.0f} hours old")
 
 
-def check_scanner(socket_path: str, host: Optional[str] = None, port: int = 3310) -> Check:
+def check_scanner(socket_path: str) -> Check:
     try:
-        if host:
-            s = socket.create_connection((host, port), timeout=10)
-        else:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(10)
-            try:
-                s.connect(socket_path)
-            except OSError:
-                s.close()
-                raise
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(10)
+        try:
+            s.connect(socket_path)
+        except OSError:
+            s.close()
+            raise
         with s:
             s.sendall(b"zPING\0")
             reply = s.recv(100).rstrip(b"\0")
@@ -256,8 +253,7 @@ def main(env=os.environ) -> int:
         checks.append(check_disk(str(Path(db).resolve().parent)))
         checks.append(check_backups(env.get("MM_BACKUP_DIR", "/srv/mining-match/backups")))
         if env.get("MM_VIRUS_SCAN", "1") != "0":
-            checks.append(check_scanner(env.get("MM_CLAMD_SOCKET", "/var/run/clamav/clamd.ctl"),
-                                        env.get("MM_CLAMD_HOST") or None, int(env.get("MM_CLAMD_PORT", "3310"))))
+            checks.append(check_scanner(env.get("MM_CLAMD_SOCKET", "/var/run/clamav/clamd.ctl")))
         checks += [check_denials(conn), check_failed_logins(conn)]
         to = env.get("MM_ALERT_EMAIL", "").strip() or None
         sent = run(conn, checks, auth.mailer_from_env(env), to, new_admin_logins(conn))

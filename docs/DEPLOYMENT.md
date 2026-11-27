@@ -116,12 +116,10 @@ signatures up to date by itself.
 paused because virus scanning is unavailable" and nothing is saved. The rest of the site keeps
 working. Infected files are refused, and both kinds of refusal are written to the activity log.
 
-- **Keep ClamAV on the same server.** A scanner on another machine is refused (the app won't start)
-  unless you set `MM_CLAMD_ALLOW_REMOTE=1`, because ClamAV's network protocol is neither encrypted
-  nor authenticated: candidates' documents would cross the network in the clear, and anyone on the
-  route could answer "OK" for an infected file. Set it only if the scanner is reached through an
-  authenticated, encrypted tunnel (for example WireGuard); then use `MM_CLAMD_HOST` and
-  `MM_CLAMD_PORT`.
+- **ClamAV must run on the same server.** Scanning through a network connection isn't supported: the
+  app won't start if `MM_CLAMD_HOST`, `MM_CLAMD_PORT` or `MM_CLAMD_ALLOW_REMOTE` is set. ClamAV's
+  network protocol is neither encrypted nor authenticated, so candidates' documents would cross the
+  network in the clear, and anyone on the route could answer "OK" for an infected file.
 - **`AlertExceedsMax yes` must be set** in `/etc/clamav/clamd.conf` (step 1 does it). Without it
   ClamAV skips a file or archive member over its size limits without flagging it, and the upload
   would be saved only partly checked. With it, such a file is refused like an infected one.

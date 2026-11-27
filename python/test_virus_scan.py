@@ -191,30 +191,34 @@ class ScannerTest(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.5)
 
     def test_settings_come_from_the_environment(self):
-        with mock.patch.dict(os.environ, {"MM_CLAMD_SOCKET": "/run/x.ctl", "MM_CLAMD_TIMEOUT": "5"}, clear=False):
-            os.environ.pop("MM_CLAMD_HOST", None)
+        with mock.patch.dict(os.environ, clear=False):
+            forget_scanner_settings()
+            os.environ.update({"MM_CLAMD_SOCKET": "/run/x.ctl", "MM_CLAMD_TIMEOUT": "5"})
             s = ClamdScanner.from_env()
-        self.assertEqual((s.socket_path, s.host, s.timeout), ("/run/x.ctl", None, 5.0))
-        with mock.patch.dict(os.environ, {"MM_CLAMD_HOST": "127.0.0.1", "MM_CLAMD_PORT": "3311"}, clear=False):
-            s = ClamdScanner.from_env()
-        self.assertEqual((s.host, s.port), ("127.0.0.1", 3311))
+        self.assertEqual((s.socket_path, s.timeout), ("/run/x.ctl", 5.0))
 
-    def test_a_scanner_on_another_machine_needs_an_explicit_opt_in(self):
-        # clamd's network protocol is neither encrypted nor authenticated, so documents would cross the
-        # network in the clear and anyone on the route could answer "OK" for an infected file.
-        for host in ("10.0.0.5", "scanner.example.com", "8.8.8.8"):
-            with self.subTest(host=host):
-                with mock.patch.dict(os.environ, {"MM_CLAMD_HOST": host}, clear=False):
-                    os.environ.pop("MM_CLAMD_ALLOW_REMOTE", None)
-                    with self.assertRaises(ValueError):
+    def test_scanning_over_the_network_is_refused_not_silently_ignored(self):
+        # Removed: clamd's network protocol is neither encrypted nor authenticated, so documents would cross
+        # the network in the clear and anyone on the route could answer "OK" for an infected file. A leftover
+        # setting must stop the app, not quietly fall back to the local socket while the operator believes
+        # uploads go to a remote scanner. Even a loopback address is refused: there is no network mode.
+        for name, value in (("MM_CLAMD_HOST", "10.0.0.5"), ("MM_CLAMD_HOST", "scanner.example.com"),
+                            ("MM_CLAMD_HOST", "127.0.0.1"), ("MM_CLAMD_PORT", "3310"),
+                            ("MM_CLAMD_ALLOW_REMOTE", "1")):
+            with self.subTest(setting=name, value=value):
+                with mock.patch.dict(os.environ, clear=False):
+                    forget_scanner_settings()
+                    os.environ[name] = value
+                    with self.assertRaises(ValueError) as caught:
                         ClamdScanner.from_env()
-                    os.environ["MM_CLAMD_ALLOW_REMOTE"] = "1"  # the operator says it is tunnelled
-                    self.assertEqual(ClamdScanner.from_env().host, host)
-        for host in ("localhost", "127.0.0.1", "::1"):  # never leaves this machine
-            with self.subTest(host=host):
-                with mock.patch.dict(os.environ, {"MM_CLAMD_HOST": host}, clear=False):
-                    os.environ.pop("MM_CLAMD_ALLOW_REMOTE", None)
-                    self.assertEqual(ClamdScanner.from_env().host, host)
+                self.assertIn(name, str(caught.exception))
+                self.assertIn("MM_CLAMD_SOCKET", str(caught.exception))  # and it says what to do instead
+
+    def test_a_blank_leftover_setting_is_not_a_problem(self):
+        with mock.patch.dict(os.environ, clear=False):
+            forget_scanner_settings()
+            os.environ["MM_CLAMD_HOST"] = "  "
+            self.assertEqual(ClamdScanner.from_env().socket_path, virus_scan.DEFAULT_SOCKET)
 
 
 class UploadsAreScanned(unittest.TestCase):
@@ -352,6 +356,13 @@ class ProductionSettings(unittest.TestCase):
             with self.assertLogs("mining_match", "ERROR"):
                 scanner = api.scanner_from_environment()
         self.assertIsInstance(scanner, ClamdScanner)
+
+    def test_the_live_app_refuses_to_start_with_a_network_scanner_setting(self):
+        with mock.patch.dict(os.environ, {"MM_SECURE_COOKIES": "1"}, clear=False):
+            forget_scanner_settings()
+            os.environ["MM_CLAMD_HOST"] = "10.0.0.5"
+            with self.assertRaises(ValueError):
+                api.scanner_from_environment()
 
     def test_turning_scanning_off_is_refused_on_a_live_site(self):
         for cookies in ("1", None):  # None = unset, which means live

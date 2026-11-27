@@ -8,9 +8,11 @@ Talks clamd's own protocol (INSTREAM) over its Unix socket, so it needs no extra
 On Ubuntu, `apt install clamav-daemon` runs clamd on /var/run/clamav/clamd.ctl and the
 clamav-freshclam service keeps its virus signatures up to date.
 
-TCP (MM_CLAMD_HOST) exists for a scanner on this machine or one reached through an authenticated,
-encrypted tunnel. clamd's network protocol is neither encrypted nor authenticated, so from_env()
-refuses any other address unless MM_CLAMD_ALLOW_REMOTE=1.
+ClamAV must run on the same server. Scanning through a network connection is not supported:
+clamd's network protocol is neither encrypted nor authenticated, so documents would cross the
+network in the clear and anyone on the route could answer "OK" for an infected file. A leftover
+MM_CLAMD_HOST, MM_CLAMD_PORT or MM_CLAMD_ALLOW_REMOTE makes from_env() raise, so the app won't
+start, instead of being ignored.
 
 Check a server from the command line (scans a harmless standard test file, EICAR):
 
@@ -18,16 +20,17 @@ Check a server from the command line (scans a harmless standard test file, EICAR
 """
 from __future__ import annotations
 
-import ipaddress
 import os
 import socket
 import struct
 import sys
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 DEFAULT_SOCKET = "/var/run/clamav/clamd.ctl"
+# Settings for scanning over the network, which was removed. Refused, never ignored: an operator who
+# still has one set would otherwise believe uploads go to a remote scanner when they go to the local one.
+REMOVED_SETTINGS = ("MM_CLAMD_HOST", "MM_CLAMD_PORT", "MM_CLAMD_ALLOW_REMOTE")
 CHUNK = 64 * 1024
 # The industry-standard harmless test "virus". Every scanner reports it as Eicar-Signature.
 # Kept split so this file itself isn't flagged by scanners.
@@ -46,34 +49,21 @@ class VirusFound(ValueError):
         self.signature = signature
 
 
-def _is_local(host: str) -> bool:
-    """True for localhost and loopback addresses (127.0.0.0/8, ::1): traffic that never leaves this machine."""
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:  # a name, which could point anywhere
-        return False
-
-
 @dataclass(frozen=True)
 class ClamdScanner:
-    socket_path: Optional[str] = DEFAULT_SOCKET  # used unless host is set
-    host: Optional[str] = None
-    port: int = 3310
+    socket_path: str = DEFAULT_SOCKET
     timeout: float = 30.0  # for the whole scan: connecting, sending the file and waiting for the answer
 
     @classmethod
     def from_env(cls) -> "ClamdScanner":
-        host = os.environ.get("MM_CLAMD_HOST", "").strip() or None
-        if host and not _is_local(host) and os.environ.get("MM_CLAMD_ALLOW_REMOTE") != "1":
-            raise ValueError(
-                f"MM_CLAMD_HOST={host} is not a local address. clamd's network protocol is neither encrypted nor "
-                "authenticated: candidates' documents would cross the network in the clear, and anyone on the "
-                "route could answer 'OK' for an infected file. Run ClamAV on this server and use MM_CLAMD_SOCKET. "
-                "Only for a scanner reached through an authenticated, encrypted tunnel, set MM_CLAMD_ALLOW_REMOTE=1.")
-        return cls(socket_path=os.environ.get("MM_CLAMD_SOCKET", DEFAULT_SOCKET), host=host,
-                   port=int(os.environ.get("MM_CLAMD_PORT", "3310")),
+        for name in REMOVED_SETTINGS:
+            if os.environ.get(name, "").strip():
+                raise ValueError(
+                    f"{name} is set, but scanning over the network is not supported. ClamAV's network protocol is "
+                    "neither encrypted nor authenticated: candidates' documents would cross the network in the "
+                    "clear, and anyone on the route could answer 'OK' for an infected file. Run ClamAV on this "
+                    f"server, use MM_CLAMD_SOCKET, and remove {name}.")
+        return cls(socket_path=os.environ.get("MM_CLAMD_SOCKET", DEFAULT_SOCKET),
                    timeout=float(os.environ.get("MM_CLAMD_TIMEOUT", "30")))
 
     @staticmethod
@@ -92,8 +82,6 @@ class ClamdScanner:
         try:
             if remaining <= 0:
                 raise socket.timeout("the virus scan took longer than its time limit")
-            if self.host:
-                return socket.create_connection((self.host, self.port), timeout=remaining)
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
                 s.settimeout(remaining)
