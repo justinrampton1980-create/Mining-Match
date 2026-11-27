@@ -155,10 +155,7 @@ def turn_on(conn, user_id: str, secret: str, step: int, *, setup_challenge: Opti
     change or the clock came in after it was read), so nothing is turned on from a challenge that no longer
     stands. Also ends the user's other sessions. Returns the recovery codes."""
     if setup_challenge is not None:
-        used = conn.execute("DELETE FROM login_challenges WHERE token_hash = ? AND user_id = ? "
-                            "AND purpose = 'setup' AND expires_at > ?", (setup_challenge, user_id, _now()))
-        if used.rowcount != 1:
-            raise TwoFactorError("this login has expired, start again")
+        use_up_challenge(conn, setup_challenge, user_id, "setup")
     conn.execute(
         "INSERT INTO two_factor (user_id, secret, enabled_at, last_step) VALUES (?, ?, CURRENT_TIMESTAMP, ?) "
         "ON CONFLICT (user_id) DO UPDATE SET secret = excluded.secret, enabled_at = excluded.enabled_at, "
@@ -222,14 +219,25 @@ def _hash(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
 
-def start_challenge(conn, user_id: str) -> dict:
-    """After a correct password: a one-time challenge for the second step."""
-    purpose = "required" if is_enabled(conn, user_id) else "setup"
+def start_challenge(conn, user_id: str, password_hash: str) -> dict:
+    """After a correct password: a one-time challenge for the second step.
+
+    password_hash is the stored hash the password was just checked against. The challenge is only made if that is
+    still the account's hash, by the same statement that makes it: checking a password takes a while (on purpose),
+    and a password change or reset can land in that time. The password just accepted would then be an old one, and
+    must not get anyone a step towards a session (or, on a first login, the chance to enrol their own authenticator).
+    Raises TwoFactorError, having written nothing, if the hash has changed."""
     token, now = secrets.token_urlsafe(32), _now()
     with conn:
+        # The delete comes first: it takes the write lock, so what is read after it (whether two-factor is on) can't
+        # change before the challenge is written.
         conn.execute("DELETE FROM login_challenges WHERE user_id = ? OR expires_at <= ?", (user_id, now))
-        conn.execute("INSERT INTO login_challenges (token_hash, user_id, purpose, expires_at) VALUES (?, ?, ?, ?)",
-                     (_hash(token), user_id, purpose, now + CHALLENGE_SECONDS))
+        purpose = "required" if is_enabled(conn, user_id) else "setup"
+        made = conn.execute("INSERT INTO login_challenges (token_hash, user_id, purpose, expires_at) "
+                            "SELECT ?, id, ?, ? FROM users WHERE id = ? AND password_hash = ?",
+                            (_hash(token), purpose, now + CHALLENGE_SECONDS, user_id, password_hash))
+        if made.rowcount != 1:
+            raise TwoFactorError("the password changed while you were logging in, start again")
     return {"two_factor": purpose, "challenge": token, "expires_at": now + CHALLENGE_SECONDS}
 
 
@@ -247,8 +255,22 @@ def count_wrong_code(conn, ch: dict) -> None:
 
 
 def end_challenge(conn, ch: dict) -> None:
+    """Throw a challenge away (a suspended account's login). Commits; doesn't care if it was already gone."""
     with conn:
         conn.execute("DELETE FROM login_challenges WHERE token_hash = ?", (ch["token_hash"],))
+
+
+def use_up_challenge(conn, token_hash: str, user_id: str, purpose: str) -> None:
+    """Use a challenge up as the first step of the transaction that lets its holder in. Doesn't commit.
+
+    A challenge is read at the start of a request, but a password change or an admin's reset can delete it before the
+    request finishes. Deleting it here, and counting the row, is what finds out: this raises TwoFactorError, having
+    written nothing, if it is gone or has expired, so nothing it was going to allow (a session, two-factor turned on)
+    happens. Call it inside `with conn:`, with the writes that depend on it after it."""
+    used = conn.execute("DELETE FROM login_challenges WHERE token_hash = ? AND user_id = ? AND purpose = ? "
+                        "AND expires_at > ?", (token_hash, user_id, purpose, _now()))
+    if used.rowcount != 1:
+        raise TwoFactorError("this login has expired, start again")
 
 
 def begin_setup(conn, ch: dict, email: str) -> dict:

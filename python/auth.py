@@ -392,7 +392,10 @@ def login(conn, email: str, password: str, ip: str) -> dict:
     if row["email_verified_at"] is None:
         raise EmailNotVerified("confirm your email address first (check your inbox)")
     if row["role"] == "admin":  # no session yet: the second step comes first (two_factor.py)
-        return two_factor.start_challenge(conn, row["id"])
+        try:
+            return two_factor.start_challenge(conn, row["id"], row["password_hash"])
+        except two_factor.TwoFactorError:  # the password was changed or reset while it was being checked
+            raise InvalidCredentials("wrong email or password") from None
     return _start_session(conn, row["id"], row["role"])
 
 
@@ -436,8 +439,11 @@ def login_two_factor(conn, challenge: str, code: str) -> dict:
         used = two_factor.check_code(conn, row["id"], code)
     except two_factor.TwoFactorError as e:
         _wrong_code(conn, ch, row["id"], e)
-    two_factor.end_challenge(conn, ch)
-    session = _start_session(conn, row["id"], row["role"])
+    # The challenge is used up and the session made in one transaction, as in confirm_two_factor. A password change
+    # or reset that landed after the challenge was read has deleted it: this fails and no session is made.
+    with conn:
+        two_factor.use_up_challenge(conn, ch["token_hash"], row["id"], "required")
+        session = _insert_session(conn, row["id"], row["role"])
     session["recovery_codes_left"] = two_factor.recovery_codes_left(conn, row["id"])
     session["used_recovery_code"] = used == "recovery"
     return session

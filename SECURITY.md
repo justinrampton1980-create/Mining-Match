@@ -26,7 +26,7 @@ Don't open a public GitHub issue for a security problem. Email the owner of this
 - Admins log in with their password and a 6-digit code from an authenticator app (standard TOTP). A correct password alone starts no session; the first login sets up the app before anything else.
 - An admin session only works while two-factor is on, so even a session made some other way can't be used without it.
 - Each code works once; a login allows 5 wrong codes, and an account 10 in 15 minutes. The same account limit applies when a logged-in admin makes new recovery codes, so a stolen session can't be used to guess a code.
-- Turning two-factor on uses up its setup step in the same database transaction, so a reset that lands at the same moment wins. A password change or reset also cuts off any login step already in progress.
+- A password change or reset cuts off any login step already in progress. Two moments are guarded against one landing in the middle of a login: the challenge for the second step is only handed out if the password it was checked with is still the account's current one, and it is used up in the same database transaction that starts the session (or, on a first login, turns two-factor on), so whichever of the two comes first wins.
 - Ten one-time recovery codes, stored hashed, cover a lost phone. Another admin can reset two-factor (logged), or the server's command line can for the only admin (`python two_factor.py reset EMAIL`).
 
 **The website**

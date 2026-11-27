@@ -374,6 +374,133 @@ class AdminLogin(ApiTest):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.client.post("/auth/two-factor/setup", json={"challenge": pending["challenge"]}).status_code, 400)
 
+    # ------------------------------------------------ a password change landing in the middle of a login
+    def reset_password_directly(self, token):
+        """The reset from an emailed link, run on its own connection, as another request would."""
+        conn = dl.connect(self.db)
+        try:
+            auth.reset_password(conn, token, "Fresh-Pass-2029-x")
+        finally:
+            conn.close()
+
+    def count(self, table, uid):
+        conn = dl.connect(self.db)
+        try:
+            return conn.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (uid,)).fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_the_second_step_gets_no_session_if_the_password_was_reset_after_the_code_was_checked(self):
+        # The challenge is read, the code is checked, and only then is the challenge used up and the session made.
+        # A reset landing in between has deleted the challenge: the right code must not still end in a session.
+        self.client.post("/auth/password-reset/request", json={"email": "admin@example.com"})
+        reset_token = self.token_from_email("admin@example.com", "reset-password")
+        started = self.raw_login("admin@example.com").json()
+        uid, real = self.user_id("admin@example.com"), two_factor.check_code
+
+        def check_then_reset(*args, **kwargs):
+            used = real(*args, **kwargs)  # the right code is accepted...
+            self.reset_password_directly(reset_token)  # ...and then the reset lands
+            return used
+
+        with mock.patch.object(two_factor, "check_code", check_then_reset):
+            r = self.two_factor_step("admin@example.com", started)
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(self.count("sessions", uid), 0)
+
+    def test_using_up_the_login_challenge_and_making_the_session_are_one_transaction(self):
+        # Same as for setup: a reset or password change must not be able to land between the two.
+        started = self.raw_login("admin@example.com").json()
+        uid = self.user_id("admin@example.com")
+        real, seen = auth._insert_session, []
+
+        def watch(conn, user_id, role):
+            other = sqlite3.connect(self.db, timeout=0.2)
+            try:
+                other.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))  # what a reset would do
+                other.commit()
+                seen.append("let in")
+            except sqlite3.OperationalError:
+                seen.append("locked out")
+            finally:
+                other.close()
+            return real(conn, user_id, role)
+
+        with mock.patch.object(auth, "_insert_session", watch):
+            r = self.two_factor_step("admin@example.com", started)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(seen, ["locked out"])
+
+    def test_setup_confirmation_fails_if_the_password_was_reset_meanwhile(self):
+        # As with an admin's reset of two-factor: nothing turned on and no session if the password is reset between
+        # reading the setup challenge and using it up.
+        self.invite_admin()
+        self.client.post("/auth/password-reset/request", json={"email": "second@example.com"})
+        reset_token = self.token_from_email("second@example.com", "reset-password")
+        started = self.raw_login("second@example.com").json()
+        info = self.client.post("/auth/two-factor/setup", json={"challenge": started["challenge"]}).json()
+        self.totp_secrets["second@example.com"] = info["secret"].replace(" ", "")
+        code = self.totp("second@example.com")
+        uid, real = self.user_id("second@example.com"), two_factor.matching_step
+
+        def reset_then_check(*args, **kwargs):
+            self.reset_password_directly(reset_token)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(two_factor, "clock", lambda: self.totp_now), \
+                mock.patch.object(two_factor, "matching_step", reset_then_check):
+            r = self.client.post("/auth/two-factor/setup/confirm", json={"challenge": started["challenge"], "code": code})
+        self.assertEqual(r.status_code, 400, r.text)
+        conn = dl.connect(self.db)
+        try:
+            self.assertFalse(two_factor.is_enabled(conn, uid))
+        finally:
+            conn.close()
+        self.assertEqual(self.count("sessions", uid), 0)
+
+    def test_a_password_reset_while_the_password_is_being_checked_gets_no_challenge(self):
+        # Checking a password is slow on purpose. If it is reset in that time, the password just accepted is an old one:
+        # no challenge may come of it, or its holder would get a step towards a session (on a first login, the chance
+        # to enrol their own authenticator) that the reset was meant to cut off.
+        self.invite_admin()
+        for email, step in (("admin@example.com", "required"), ("second@example.com", "setup")):
+            with self.subTest(step=step):
+                self.client.post("/auth/password-reset/request", json={"email": email})
+                reset_token, uid, real = self.token_from_email(email, "reset-password"), self.user_id(email), auth.verify_password
+
+                def check_then_reset(password, stored):
+                    ok = real(password, stored)  # the old password is right...
+                    self.reset_password_directly(reset_token)  # ...and the reset lands before the login moves on
+                    return ok
+
+                with mock.patch.object(auth, "verify_password", check_then_reset):
+                    r = self.client.post("/auth/login", json={"email": email, "password": PASSWORD})
+                self.assertEqual(r.status_code, 401, r.text)
+                self.assertEqual(self.count("login_challenges", uid), 0)
+                self.assertEqual(self.raw_login(email, "Fresh-Pass-2029-x").json()["two_factor"], step)  # the new one works
+
+    def test_a_login_challenge_reads_whether_two_factor_is_on_under_the_write_lock(self):
+        # Read before the lock, it could change before the challenge is written: an admin's own first-time setup
+        # finishing in between would leave a "setup" challenge (which can replace the authenticator) for an account
+        # that now has one.
+        seen, real = [], two_factor.is_enabled
+
+        def watch(conn, user_id):
+            other = sqlite3.connect(self.db, timeout=0.2)
+            try:
+                other.execute("DELETE FROM rate_events WHERE key = 'nobody'")  # any write at all
+                other.commit()
+                seen.append("let in")
+            except sqlite3.OperationalError:
+                seen.append("locked out")
+            finally:
+                other.close()
+            return real(conn, user_id)
+
+        with mock.patch.object(two_factor, "is_enabled", watch):
+            self.raw_login("admin@example.com")
+        self.assertEqual(seen, ["locked out"])
+
 
 if __name__ == "__main__":
     unittest.main()
