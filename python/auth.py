@@ -56,6 +56,7 @@ RESENDS_PER_EMAIL = (3, 3600)
 # Employer candidate searches and rankings: generous for real recruiting, but stops one
 # employer sweeping the whole candidate pool with thousands of varied searches.
 EMPLOYER_SEARCHES_PER_HOUR = (100, 3600)
+DATA_EXPORTS_PER_HOUR = (5, 3600)  # each export packs every uploaded file
 EMPLOYER_SEARCHES_PER_DAY = (500, 24 * 3600)
 
 COMMON_PASSWORDS = frozenset({
@@ -231,6 +232,12 @@ def _limit(conn, bucket: str, key: str, rule: tuple, message: str) -> None:
             (bucket, key, clock() - window, limit),
         ).fetchone()[0]
         raise TooManyAttempts(message, retry_after=max(1, oldest + window - clock()))
+
+
+def limit_data_export(conn, user_id: str) -> None:
+    """Count one self-service data export; raise TooManyAttempts over the limit."""
+    _limit(conn, "data_export", user_id, DATA_EXPORTS_PER_HOUR, "too many data downloads, try again later")
+    _record(conn, "data_export", user_id)
 
 
 def limit_employer_search(conn, employer_id: str) -> None:

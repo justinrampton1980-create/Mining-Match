@@ -1018,6 +1018,18 @@ def create_admin(conn, email: str, password_hash: Optional[str] = None, *, by: O
     return user_id
 
 
+def authorize_data_export(conn, principal, user_id: str) -> Principal:
+    """A user may export their own data; an admin may export anyone's. Logged either way."""
+    action = "user.export_data"
+    p = _authorize(conn, principal, action, "candidate", "employer", "admin")
+    if p.user_id != user_id and p.role != "admin":
+        _deny(conn, p, action, "user", user_id, "only the account itself or an admin")
+    if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+        raise dl.NotFoundError(f"user not found: {user_id}")
+    _ok(conn, p, action, "user", user_id, "own data" if p.user_id == user_id else "by an admin")
+    return p
+
+
 def list_users(conn, principal, *, search: Optional[str] = None, role: Optional[str] = None,
                limit: int = 100) -> list:
     """Admin: find accounts by email or name, newest first."""
