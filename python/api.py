@@ -505,7 +505,7 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
 
     @app.post("/auth/two-factor/recovery-codes", tags=["auth"])
     def new_recovery_codes(body: CodeIn, me: Me, conn: Conn):
-        return {"recovery_codes": two_factor.new_recovery_codes(conn, me.user_id, body.code)}
+        return {"recovery_codes": auth.new_recovery_codes(conn, me.user_id, body.code)}
 
     @app.post("/admin/users/{user_id}/reset-two-factor", status_code=204, tags=["admin"])
     def reset_two_factor(user_id: Id, me: Me, conn: Conn):
@@ -874,6 +874,8 @@ def create_app(db_path: str, *, storage, mailer: auth.Mailer, base_url: str,
     @app.get("/admin/users/{user_id}/export", tags=["admin"], response_class=Response)
     def export_user_data(user_id: Id, me: Me, conn: Conn):
         """Admin: everything held about one user, to answer an access request made by email."""
+        if user_id == me.user_id:  # your own data through this route counts against the same hourly limit as /me/export
+            auth.limit_data_export(conn, me.user_id)
         return _zip(data_export.export_user_data(conn, me, storage, user_id), "user-data")
 
     @app.put("/admin/users/{user_id}/active", tags=["admin"])

@@ -1,7 +1,9 @@
 """Employer account closure (launch blocker B4)."""
 import json
+import sqlite3
 import unittest
 
+import access_control as ac
 import data_layer as dl
 from test_api import BILLING, JOB, PASSWORD, ApiTest
 
@@ -165,6 +167,69 @@ class EmployerClosure(ApiTest):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertIn('mm_session=""', r.headers["set-cookie"])
         self.assertEqual(self.client.get("/me", headers=self.WEB).status_code, 401)
+
+    def test_closing_one_employer_leaves_another_employers_records_alone(self):
+        # The deletions are scoped to the employer being closed. With only one employer in the fixture, an
+        # unscoped DELETE would pass every other test here.
+        s = self.busy_employer()
+        eh2, me2 = self.signup("employer", "hr@beta.example", company_name="Beta Mining", contact_name="Lee Other",
+                               phone="07 4900 9999")
+        eid2 = me2["employer_id"]
+        job2 = self.client.post("/jobs", json={**JOB, "status": "open"}, headers=eh2).json()["id"]
+        sid = self.client.post("/shortlists", json={"name": "Beta crew", "job_id": job2}, headers=eh2).json()["id"]
+        self.client.post(f"/shortlists/{sid}/entries", json={"candidate_id": s["cid"], "notes": "Beta's note"}, headers=eh2)
+        self.client.post(f"/candidates/{s['cid']}/contact-request", json={"job_id": job2}, headers=eh2)
+
+        def beta():
+            return (self.count("SELECT COUNT(*) FROM shortlists WHERE employer_id = ?", eid2),
+                    self.count("SELECT COUNT(*) FROM shortlist_entries WHERE shortlist_id IN "
+                               "(SELECT id FROM shortlists WHERE employer_id = ?)", eid2),
+                    self.count("SELECT COUNT(*) FROM contact_releases WHERE employer_id = ?", eid2),
+                    self.count("SELECT COUNT(*) FROM jobs WHERE employer_id = ? AND status = 'open'", eid2))
+
+        before = beta()
+        self.assertEqual(before, (1, 1, 1, 1))
+        r = self.client.post(f"/employers/{s['eid']}/close", json={"password": PASSWORD}, headers=s["eh"])
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(beta(), before)
+        self.assertEqual(self.client.get("/me", headers=eh2).status_code, 200)
+        self.assertEqual(self.row("SELECT phone FROM employers WHERE id = ?", eid2)["phone"], "07 4900 9999")
+
+    def employer_principal(self, conn, employer_id):
+        user_id = conn.execute("SELECT user_id FROM employers WHERE id = ?", (employer_id,)).fetchone()[0]
+        return ac.principal_for_user(conn, user_id)
+
+    def test_closing_takes_the_write_lock_before_counting_what_is_owed(self):
+        # Count and closure must be one unit. If the count ran outside a transaction, an invoice recorded just
+        # after it would be missed and the closure would commit anyway.
+        s = self.busy_employer()
+        conn = dl.connect(self.db)
+        try:
+            principal = self.employer_principal(conn, s["eid"])
+            trace = []
+            conn.set_trace_callback(lambda sql: trace.append((sql, conn.in_transaction)))
+            ac.close_employer(conn, principal, s["eid"], password=PASSWORD)
+            conn.set_trace_callback(None)
+        finally:
+            conn.close()
+        self.assertEqual([in_transaction for sql, in_transaction in trace if "COUNT(*) FROM invoices" in sql], [True])
+
+    def test_a_refused_closure_lets_go_of_the_write_lock(self):
+        s = self.busy_employer(paid=False)
+        conn = dl.connect(self.db)
+        try:
+            principal = self.employer_principal(conn, s["eid"])
+            with self.assertRaises(dl.DataError):
+                ac.close_employer(conn, principal, s["eid"], password=PASSWORD)
+            self.assertFalse(conn.in_transaction)
+            other = sqlite3.connect(self.db, timeout=0.3)  # would fail with "database is locked" if still held
+            try:
+                other.execute("UPDATE employers SET phone = phone")
+                other.commit()
+            finally:
+                other.close()
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

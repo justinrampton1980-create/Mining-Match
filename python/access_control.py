@@ -1065,13 +1065,20 @@ def close_employer(conn, principal, employer_id: str, *, password: Optional[str]
         raise dl.DataError("this account is already closed")
     if p.role == "employer" and not auth.verify_password(str(password or ""), row["password_hash"]):
         raise auth.InvalidCredentials("your password is wrong")
-    owing = conn.execute("SELECT COUNT(*) FROM invoices WHERE employer_id = ? AND status IN ('scheduled', 'issued')",
-                         (employer_id,)).fetchone()[0]
-    if owing:
-        raise dl.DataError(f"the account can't be closed while {owing} invoice{'s are' if owing != 1 else ' is'} "
-                           "unpaid or still to be issued; pay or settle them first")
     user_id = row["user_id"]
-    with conn:
+    # Take the write lock BEFORE counting what is owed, and count and close in one transaction: otherwise an
+    # invoice recorded between the count and the closure would be missed, and the closure would commit anyway.
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        email = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()["email"]
+        if is_closed_email(email):  # closed by someone else while we were checking the password
+            raise dl.DataError("this account is already closed")
+        owing = conn.execute("SELECT COUNT(*) FROM invoices WHERE employer_id = ? AND status IN ('scheduled', 'issued')",
+                             (employer_id,)).fetchone()[0]
+        if owing:
+            raise dl.DataError(f"the account can't be closed while {owing} invoice{'s are' if owing != 1 else ' is'} "
+                               "unpaid or still to be issued; pay or settle them first")
         conn.execute("UPDATE users SET email = ?, password_hash = NULL, is_active = 0 WHERE id = ?",
                      (f"closed-{user_id}@{CLOSED_EMAIL_DOMAIN}", user_id))
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
@@ -1082,6 +1089,10 @@ def close_employer(conn, principal, employer_id: str, *, password: Optional[str]
                             "WHERE employer_id = ? AND status IN ('draft', 'open')", (employer_id,)).rowcount
         lists = conn.execute("DELETE FROM shortlists WHERE employer_id = ?", (employer_id,)).rowcount
         requests = conn.execute("DELETE FROM contact_releases WHERE employer_id = ?", (employer_id,)).rowcount
+        conn.commit()
+    except BaseException:
+        conn.rollback()  # a refusal must not leave the write lock held
+        raise
     note = "closed by the employer" if p.role == "employer" else "closed by an admin" + (f": {reason}" if reason else "")
     _ok(conn, p, action, "employer", employer_id, note)
     return {"closed": True, "jobs_closed": jobs, "shortlists_removed": lists, "contact_requests_removed": requests}

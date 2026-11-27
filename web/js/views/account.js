@@ -95,7 +95,7 @@ async function twoFactorPanel(ctx) {
   error, async () => {
     const made = await post('/auth/two-factor/recovery-codes', { code: code.value });
     panel.replaceChildren(...recoveryCodesView(made.recovery_codes, 'Your new recovery codes',
-      () => ctx.reload('#tf-title')));
+      () => ctx.reload('#tf-title'), 'tf-title'));
     panel.querySelector('h2').focus();
   });
   const left = status.recovery_codes_left;

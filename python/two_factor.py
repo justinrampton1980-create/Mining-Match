@@ -83,7 +83,9 @@ def current_step(at: Optional[float] = None) -> int:
 
 def matching_step(secret: str, code: str, last_step: Optional[int]) -> Optional[int]:
     """The time step this code belongs to, if valid and newer than the last one used."""
-    code = "".join(ch for ch in str(code or "") if ch.isdigit())
+    # ASCII digits only: str.isdigit() also accepts other scripts' digits (fullwidth, Arabic-Indic, ...), and
+    # hmac.compare_digest raises on non-ASCII text. Dropped here, such input is just a wrong code.
+    code = "".join(ch for ch in str(code or "") if ch in "0123456789")
     if len(code) != DIGITS:
         return None
     now = current_step()
@@ -144,9 +146,19 @@ def _replace_recovery_codes(conn, user_id: str) -> list:
     return codes
 
 
-def enable(conn, user_id: str, secret: str, step: int) -> list:
-    """Turn two-factor on with a confirmed secret. Ends the user's other sessions. Returns recovery codes."""
+def enable(conn, user_id: str, secret: str, step: int, *, setup_challenge: Optional[str] = None) -> list:
+    """Turn two-factor on with a confirmed secret. Ends the user's other sessions. Returns recovery codes.
+
+    setup_challenge: the token_hash of the login challenge this setup belongs to. It is used up in the same
+    transaction, and enabling is refused if it is gone or expired (an admin's reset, a password change or the
+    clock came in after it was read), so nothing is turned on from a challenge that no longer stands.
+    """
     with conn:
+        if setup_challenge is not None:
+            used = conn.execute("DELETE FROM login_challenges WHERE token_hash = ? AND user_id = ? "
+                                "AND purpose = 'setup' AND expires_at > ?", (setup_challenge, user_id, _now()))
+            if used.rowcount != 1:
+                raise TwoFactorError("this login has expired, start again")
         conn.execute(
             "INSERT INTO two_factor (user_id, secret, enabled_at, last_step) VALUES (?, ?, CURRENT_TIMESTAMP, ?) "
             "ON CONFLICT (user_id) DO UPDATE SET secret = excluded.secret, enabled_at = excluded.enabled_at, "

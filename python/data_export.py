@@ -118,7 +118,8 @@ def _candidate_links(conn, candidate_id: str) -> dict:
             (candidate_id,)),
         "hires": _rows(conn,
             "SELECT e.company_name AS employer, p.job_title AS job, p.start_date, "
-            "p.base_salary_cents / 100.0 AS base_salary_aud, p.status, p.reported_at "
+            "p.candidate_name AS name_at_hire, p.base_salary_cents / 100.0 AS base_salary_aud, p.status, "
+            "p.cancelled_reason, p.reported_at "
             "FROM placements p LEFT JOIN employers e ON e.id = p.employer_id "
             "WHERE p.candidate_id = ? ORDER BY p.start_date", (candidate_id,)),
         "reminders": _rows(conn,

@@ -91,7 +91,7 @@ async function twoFactorSetup(ctx, challenge, panel) {
     panel.replaceChildren(...recoveryCodesView(session.recovery_codes, 'Save your recovery codes', async () => {
       await ctx.refresh();
       ctx.go(ctx.home());
-    }));
+    }, 'login-title'));
     panel.querySelector('h2').focus();
   });
   return [h('h2', { id: 'login-title', tabindex: '-1' }, 'Set up two-factor login'),
@@ -103,8 +103,9 @@ async function twoFactorSetup(ctx, challenge, panel) {
     form];
 }
 
-// Shown once: after setup, and when making new codes from the account page.
-export function recoveryCodesView(codes, title, onDone) {
+// Shown once: after setup, and when making new codes from the account page. headingId: the id the section
+// around it points at with aria-labelledby, which this heading replaces (else the section loses its name).
+export function recoveryCodesView(codes, title, onDone, headingId) {
   const save = () => {
     const blob = new Blob([`Mining Match recovery codes\n\n${codes.join('\n')}\n\nEach code works once.\n`], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -114,7 +115,7 @@ export function recoveryCodesView(codes, title, onDone) {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  return [h('h2', { tabindex: '-1' }, title),
+  return [h('h2', { id: headingId, tabindex: '-1' }, title),
     h('p', {}, 'If you lose your phone, each of these codes lets you log in once instead of an app code. Keep them somewhere safe, such as a password manager. They won’t be shown again.'),
     h('ul', { class: 'recovery-codes', 'aria-label': 'Recovery codes' }, codes.map((c) => h('li', {}, h('code', {}, c)))),
     h('div', { class: 'actions' },

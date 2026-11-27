@@ -456,11 +456,25 @@ def confirm_two_factor(conn, challenge: str, code: str) -> dict:
     if step is None:
         _wrong_code(conn, ch, row["id"], two_factor.TwoFactorError(
             "that code isn't right: check the app shows Mining Match and try the newest code"))
-    codes = two_factor.enable(conn, row["id"], ch["pending_secret"], step)
-    two_factor.end_challenge(conn, ch)
+    # The challenge is used up inside enable(), in the same transaction, so a reset that lands after it was read
+    # above can't be overtaken: no challenge, nothing turned on and no session.
+    codes = two_factor.enable(conn, row["id"], ch["pending_secret"], step, setup_challenge=ch["token_hash"])
     session = _start_session(conn, row["id"], row["role"])
     session["recovery_codes"] = codes
     return session
+
+
+def new_recovery_codes(conn, user_id: str, code: str) -> list:
+    """Logged-in admin: replace the recovery codes, after a current app code.
+
+    Wrong codes count against the same per-account limit as at login. Without that, someone holding a stolen
+    session could guess the app code here, and the new recovery codes would outlive the session."""
+    _limit(conn, "two_factor", user_id, two_factor.WRONG_CODES_PER_USER, "too many wrong codes, try again later")
+    try:
+        return two_factor.new_recovery_codes(conn, user_id, code)
+    except two_factor.TwoFactorError:
+        _record(conn, "two_factor", user_id)
+        raise
 
 
 def session_user(conn, token: Optional[str]) -> Optional[str]:
@@ -504,6 +518,8 @@ def change_password(conn, token: str, current_password: str, new_password: str) 
     with conn:
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(new_password), user_id))
         conn.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, _hash_token(token)))
+        # A login step started with the old password must not finish after it was changed.
+        conn.execute("DELETE FROM login_challenges WHERE user_id = ?", (user_id,))
 
 
 # ----------------------------------------------------------- password reset
@@ -536,6 +552,8 @@ def reset_password(conn, token: str, new_password: str) -> None:
             (hash_password(new_password), user_id),
         )
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        # A login step started with the old password must not finish after it was reset.
+        conn.execute("DELETE FROM login_challenges WHERE user_id = ?", (user_id,))
 
 
 def send_admin_invite(conn, mailer: Mailer, base_url: str, user_id: str) -> None:

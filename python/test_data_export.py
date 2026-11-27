@@ -191,6 +191,38 @@ class DataExport(ApiTest):
                 for text in forbidden:
                     self.assertNotIn(text, everything)
 
+    def test_the_admin_route_doesnt_dodge_the_self_service_limit(self):
+        # Anyone could ask for their own archive through the admin route, with no hourly count.
+        ch, cid = self.candidate()
+        uid = self.client.get("/me", headers=ch).json()["user_id"]
+        now = [int(time.time())]
+        with mock.patch.object(auth, "clock", lambda: now[0]):
+            h = self.login("jordan@example.com")
+            for _ in range(auth.DATA_EXPORTS_PER_HOUR[0]):
+                self.assertEqual(self.client.get(f"/admin/users/{uid}/export", headers=h).status_code, 200)
+            self.assertEqual(self.client.get(f"/admin/users/{uid}/export", headers=h).status_code, 429)
+            self.assertEqual(self.client.get("/me/export", headers=h).status_code, 429)  # one allowance, two routes
+            # An admin answering an access request for someone else isn't held to the self-service limit.
+            for _ in range(auth.DATA_EXPORTS_PER_HOUR[0] + 2):
+                self.assertEqual(self.client.get(f"/admin/users/{uid}/export", headers=self.admin).status_code, 200)
+
+    def test_hire_records_keep_the_name_at_hire_and_any_cancellation_reason(self):
+        # placements keeps the candidate's name as it was at the hire, and why a hire was cancelled: both are
+        # personal details held about them, so the export must carry them (still without the employer's fee).
+        ch, cid, eh, eid = self.full_candidate_story()
+        self.assertEqual(self.client.patch(f"/candidates/{cid}", json={"name": "Jordan Renamed"}, headers=ch).status_code, 200)
+        conn = dl.connect(self.db)
+        placement_id = conn.execute("SELECT id FROM placements").fetchone()[0]
+        conn.close()
+        r = self.client.post(f"/hires/{placement_id}/cancel", json={"reason": "Start date withdrawn"}, headers=self.admin)
+        self.assertEqual(r.status_code, 200, r.text)
+        z, data = self.unzip(self.client.get("/me/export", headers=ch))
+        (hire,) = data["hires"]
+        self.assertEqual(data["candidate"]["name"], "Jordan Renamed")
+        self.assertEqual(hire["name_at_hire"], "Jordan Private")
+        self.assertEqual((hire["status"], hire["cancelled_reason"]), ("cancelled", "Start date withdrawn"))
+        self.assertNotIn("fee", " ".join(hire))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,12 @@ class Codes(unittest.TestCase):
             for junk in ("", "12345", "abcdef", None, "1234567"):
                 self.assertIsNone(two_factor.matching_step(self.SECRET, junk, None))
 
+    def test_digits_of_other_scripts_are_a_wrong_code_not_a_crash(self):
+        # str.isdigit() accepts fullwidth and other scripts' digits, and hmac.compare_digest raises on
+        # non-ASCII text: that used to be a 500 error and an attempt that wasn't counted.
+        for junk in ("１２３４５６", "١٢٣٤٥٦", "123４56"):
+            self.assertIsNone(two_factor.matching_step(self.SECRET, junk, None), junk)
+
     def test_secrets_and_setup_links(self):
         a, b = two_factor.new_secret(), two_factor.new_secret()
         self.assertNotEqual(a, b)
@@ -259,6 +265,85 @@ class AdminLogin(ApiTest):
         self.assertEqual(self.raw_login("admin@example.com").json()["two_factor"], "setup")
         with mock.patch.dict(os.environ, {"MM_DB": self.db}), mock.patch("sys.stderr", new_callable=io.StringIO):
             self.assertEqual(two_factor._main(["two_factor.py", "reset", "jordan@nowhere.example"]), 1)
+
+    # ------------------------------------------------------------ found in review
+    def test_a_code_in_other_scripts_digits_is_refused_and_counted(self):
+        started = self.raw_login("admin@example.com").json()
+        r = self.client.post("/auth/login/two-factor", json={"challenge": started["challenge"], "code": "１２３４５６"})
+        self.assertEqual(r.status_code, 400, r.text)  # not a 500
+        conn = dl.connect(self.db)
+        try:
+            self.assertEqual(conn.execute("SELECT tries FROM login_challenges").fetchone()[0], 1)
+        finally:
+            conn.close()
+
+    def test_the_recovery_code_route_limits_wrong_codes_too(self):
+        # Making new recovery codes needs a current app code. Without a limit, someone holding a stolen admin
+        # session could guess it, and the new recovery codes would outlive that session.
+        limit, _ = two_factor.WRONG_CODES_PER_USER
+        for _ in range(limit):
+            r = self.client.post("/auth/two-factor/recovery-codes", json={"code": "000000"}, headers=self.admin)
+            self.assertEqual(r.status_code, 400)
+        code = self.totp("admin@example.com")  # now even the right code gets no further
+        with mock.patch.object(two_factor, "clock", lambda: self.totp_now):
+            r = self.client.post("/auth/two-factor/recovery-codes", json={"code": code}, headers=self.admin)
+        self.assertEqual(r.status_code, 429, r.text)
+
+    def test_setup_confirmation_fails_if_two_factor_was_reset_meanwhile(self):
+        # The setup challenge is read, the code is checked, then two-factor is turned on. If another admin's
+        # reset lands in between, it must win: nothing turned on and no session started.
+        self.invite_admin()
+        started = self.raw_login("second@example.com").json()
+        info = self.client.post("/auth/two-factor/setup", json={"challenge": started["challenge"]}).json()
+        self.totp_secrets["second@example.com"] = info["secret"].replace(" ", "")
+        code = self.totp("second@example.com")
+        uid = self.user_id("second@example.com")
+        real = two_factor.matching_step
+
+        def reset_then_check(*args, **kwargs):
+            conn = dl.connect(self.db)
+            try:
+                two_factor.reset(conn, uid)  # the other admin's reset, landing mid-request
+            finally:
+                conn.close()
+            return real(*args, **kwargs)
+
+        with mock.patch.object(two_factor, "clock", lambda: self.totp_now), \
+                mock.patch.object(two_factor, "matching_step", reset_then_check):
+            r = self.client.post("/auth/two-factor/setup/confirm", json={"challenge": started["challenge"], "code": code})
+        self.assertEqual(r.status_code, 400, r.text)
+        conn = dl.connect(self.db)
+        try:
+            self.assertFalse(two_factor.is_enabled(conn, uid))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id = ?", (uid,)).fetchone()[0], 0)
+        finally:
+            conn.close()
+
+    def test_pending_login_steps_die_when_the_password_changes_or_is_reset(self):
+        # A login started with the old password must not finish after the password changed: the holder of an
+        # old challenge could otherwise still get a session (or, mid-setup, enrol their own authenticator).
+        started = self.raw_login("admin@example.com").json()
+        r = self.client.post("/auth/change-password", headers=self.admin,
+                             json={"current_password": PASSWORD, "new_password": "Another-Pass-2027"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.two_factor_step("admin@example.com", started).status_code, 400)  # changed while logged in
+
+        started = self.raw_login("admin@example.com", "Another-Pass-2027").json()
+        self.client.post("/auth/password-reset/request", json={"email": "admin@example.com"})
+        token = self.token_from_email("admin@example.com", "reset-password")
+        r = self.client.post("/auth/password-reset/confirm", json={"token": token, "new_password": "Third-Pass-2028-x"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.two_factor_step("admin@example.com", started).status_code, 400)  # reset by email
+
+        self.admin = self.login("admin@example.com", "Third-Pass-2028-x")  # the reset ended every session
+        self.invite_admin()  # a first-login setup step is cut off the same way
+        pending = self.raw_login("second@example.com").json()
+        self.assertEqual(pending["two_factor"], "setup")
+        self.client.post("/auth/password-reset/request", json={"email": "second@example.com"})
+        token = self.token_from_email("second@example.com", "reset-password")
+        r = self.client.post("/auth/password-reset/confirm", json={"token": token, "new_password": "Fresh-Pass-2029-x"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.client.post("/auth/two-factor/setup", json={"challenge": pending["challenge"]}).status_code, 400)
 
 
 if __name__ == "__main__":

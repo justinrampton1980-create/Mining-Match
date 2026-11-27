@@ -6,7 +6,7 @@ Last updated 27 November 2026. This file describes only what exists in this repo
 
 The platform runs end to end on one computer: candidates and employers can register, build profiles and post jobs. Candidates are matched and scored automatically. Employers can shortlist candidates, unlock contact details through a two-step consent and fee-terms process, and get invoiced for placements. Admins log in with two-factor, any user can download their data, and employers can close their account. It has not been deployed, has not had an independent security test, and still uses SQLite rather than PostgreSQL.
 
-Test results at this commit: **267 Python tests** (including 2 full browser tests in Chrome, 17 that run the backup script for real and 6 that need a running ClamAV; those 23 are skipped on a machine without the tools) and **20 JavaScript tests**, all passing. Each feature area was also checked by deliberately inserting likely bugs and confirming the tests catch them.
+Test results at this commit: **277 Python tests** (including 2 full browser tests in Chrome, 17 that run the backup script for real and 6 that need a running ClamAV; those 23 are skipped on a machine without the tools) and **20 JavaScript tests**, all passing. Each feature area was also checked by deliberately inserting likely bugs and confirming the tests catch them.
 
 ## Your requested features
 

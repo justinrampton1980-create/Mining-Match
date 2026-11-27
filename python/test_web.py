@@ -175,6 +175,8 @@ class HiringFlowInBrowser(unittest.TestCase):
                 page.get_by_role("button", name="Turn on two-factor login").click()
                 expect(page.get_by_role("heading", name="Save your recovery codes")).to_be_visible()
             expect(page.locator(".recovery-codes li")).to_have_count(10)
+            # The new heading keeps the section's accessible name, so it is still a named landmark.
+            expect(page.get_by_role("region", name="Save your recovery codes")).to_be_visible()
             with page.expect_download() as saved:
                 page.get_by_role("button", name="Download codes").click()
             self.assertEqual(Path(saved.value.path()).read_text().count("-"), 20)
