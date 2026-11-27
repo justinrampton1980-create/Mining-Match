@@ -8,6 +8,7 @@ from unittest import mock
 
 import auth
 import data_layer as dl
+import two_factor
 from test_api import BILLING, JOB, PDF, ApiTest
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -169,6 +170,26 @@ class DataExport(ApiTest):
         self.assertNotIn("candidate", data)
         self.assertNotIn("employer", data)
         self.assertEqual(data["account"]["id"], me["user_id"])
+
+    def test_an_admins_two_factor_secret_and_recovery_codes_are_never_exported(self):
+        # Two-factor was added after the export, which reads named tables. Keep it that way: a code made from
+        # the secret is as good as the password, so neither it nor the recovery codes may ever leave.
+        conn = dl.connect(self.db)
+        admin_id = conn.execute("SELECT id FROM users WHERE email = 'admin@example.com'").fetchone()[0]
+        with conn:
+            codes = two_factor._replace_recovery_codes(conn, admin_id)
+        hashes = [r[0] for r in conn.execute("SELECT code_hash FROM recovery_codes WHERE user_id = ?", (admin_id,))]
+        conn.close()
+        secret = self.totp_secrets["admin@example.com"]
+        self.assertEqual(len(hashes), len(codes))
+        forbidden = [secret, two_factor.otpauth_uri("admin@example.com", secret), *codes,
+                     *(c.replace("-", "") for c in codes), *hashes]
+        for path in ("/me/export", f"/admin/users/{admin_id}/export"):
+            with self.subTest(path=path):
+                z, data = self.unzip(self.client.get(path, headers=self.admin))
+                everything = "\n".join(z.read(name).decode("utf-8", "replace") for name in z.namelist())
+                for text in forbidden:
+                    self.assertNotIn(text, everything)
 
 
 if __name__ == "__main__":

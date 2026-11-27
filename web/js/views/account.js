@@ -1,6 +1,7 @@
-// Account: password, log out, download my data, delete (candidates), close (employers).
+// Account: password, log out, download my data, two-factor (admins), delete (candidates), close (employers).
 import { h, field, input, errorArea, onSubmit, actionButton, confirmButton, toast } from '../dom.js';
-import { post, del, download } from '../api.js';
+import { get, post, del, download } from '../api.js';
+import { recoveryCodesView } from './auth.js';
 
 const ROLE = { candidate: 'Candidate account', employer: 'Employer account', admin: 'Administrator' };
 
@@ -42,6 +43,7 @@ export async function account(ctx) {
         toast('Your data is downloading.');
       }))),
   ];
+  if (me.role === 'admin') parts.push(await twoFactorPanel(ctx));
   if (me.role === 'candidate') {
     parts.push(h('section', { class: 'panel stack', 'aria-labelledby': 'del-title' },
       h('h2', { id: 'del-title' }, 'Delete your account'),
@@ -79,4 +81,29 @@ function closeEmployerPanel(ctx) {
     ctx.go('/login');
   });
   return form;
+}
+
+// Admins: two-factor is always on; this shows the recovery codes left and makes new ones.
+async function twoFactorPanel(ctx) {
+  const status = await get('/auth/two-factor');
+  const code = input({ inputmode: 'numeric', autocomplete: 'one-time-code', required: true, maxlength: '6', class: 'code-input' });
+  const error = errorArea();
+  const panel = h('section', { class: 'panel stack', 'aria-labelledby': 'tf-title' });
+  const form = onSubmit(h('form', { class: 'stack' },
+    field('Code from your authenticator app', code, 'Making new recovery codes cancels the old ones.'),
+    error.el, h('div', { class: 'actions' }, h('button', { type: 'submit', class: 'btn' }, 'Make new recovery codes'))),
+  error, async () => {
+    const made = await post('/auth/two-factor/recovery-codes', { code: code.value });
+    panel.replaceChildren(...recoveryCodesView(made.recovery_codes, 'Your new recovery codes',
+      () => ctx.reload('#tf-title')));
+    panel.querySelector('h2').focus();
+  });
+  const left = status.recovery_codes_left;
+  panel.append(
+    h('h2', { id: 'tf-title', tabindex: '-1' }, 'Two-factor login'),
+    h('p', {}, 'On: you log in with your password and a code from your authenticator app.'),
+    h('p', { class: left <= 3 ? 'form-error' : 'muted' }, `${left} recovery ${left === 1 ? 'code' : 'codes'} left.`),
+    form,
+    h('p', { class: 'small muted' }, 'New phone? Ask another admin to reset your two-factor login, then set it up again when you next log in.'));
+  return panel;
 }

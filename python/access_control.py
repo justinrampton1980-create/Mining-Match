@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, Optional
 
 import data_layer as dl
+import two_factor
 
 __all__ = [
     "AccessDenied", "Principal", "principal_for_user",
@@ -1084,6 +1085,18 @@ def close_employer(conn, principal, employer_id: str, *, password: Optional[str]
     note = "closed by the employer" if p.role == "employer" else "closed by an admin" + (f": {reason}" if reason else "")
     _ok(conn, p, action, "employer", employer_id, note)
     return {"closed": True, "jobs_closed": jobs, "shortlists_removed": lists, "contact_requests_removed": requests}
+
+
+def reset_two_factor(conn, principal, user_id: str) -> None:
+    """Admin: turn off another admin's two-factor login (lost phone). They set it up again at next login."""
+    action = "user.reset_two_factor"
+    p = _authorize(conn, principal, action, "admin")
+    if user_id == p.user_id:
+        _deny(conn, p, action, "user", user_id, "cannot reset your own two-factor login")
+    if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+        raise dl.NotFoundError(f"user not found: {user_id}")
+    two_factor.reset(conn, user_id)
+    _ok(conn, p, action, "user", user_id, "two-factor reset; logged out everywhere")
 
 
 def list_users(conn, principal, *, search: Optional[str] = None, role: Optional[str] = None,
